@@ -2,237 +2,229 @@
 
 lfhai is a distributed, local-first compute fabric and runtime designed to coordinate mismatched, resource-constrained consumer hardware into a unified AI system. Rather than relying on uniform cluster topologies (like homogeneous GPU nodes), lfhai abstracts heterogeneous hardware—such as standard consumer GPUs, older CPUs, mobile devices, and shared local servers—into a single execution layer.
 
-The runtime handles cluster orchestration, metadata consensus, dynamic Task Graph (DAG) scheduling, semantic caching, and private mesh networking.
+**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, and CLI are working. 25 tests passing.
 
 ---
 
-## System Architecture
+## Quick Start
+
+```bash
+# Install
+git clone https://github.com/your-org/lfhai.git
+cd lfhai
+pip install -e .
+
+# Start the controller
+lfh controller
+
+# On a GPU machine with Ollama running, start a worker
+lfh worker start -c http://<controller-ip>:8001
+
+# Submit a chat request
+lfh chat llama3 "What is the capital of France?"
+
+# Check cluster status
+lfh status
+```
+
+---
+
+## What V1 Includes
+
+| Component | Status | Description |
+|-----------|--------|-------------|
+| **Controller** | Working | Node registry (SQLite), heartbeat tracking, task routing |
+| **Worker** | Working | Ollama integration, capability detection, task execution |
+| **Gateway** | Working | OpenAI-compatible HTTP API (streaming + non-streaming) |
+| **CLI** | Working | `lfh` command: status, chat, nodes, models, worker start |
+| **Router** | Working | GPU-preferring, capability-aware node selection |
+| **Tailcat** | Ready | Encrypted tunnel wrapper (needs tailcat binary installed) |
+| **Tests** | 25 passing | Models, registry, router, controller API |
+| **install.sh** | Ready | Worker provisioning script (Ollama + lfhai + systemd) |
+
+### What V1 Does NOT Include (Future)
+
+- DAG scheduling (requests go to single best node, no graph splitting)
+- Raft consensus (single controller, SQLite-backed)
+- Tailscale mesh (direct HTTP, tailcat available as opt-in)
+- Semantic caching (exact-match routing only)
+- RAG / embedding support
+- Dashboard / web UI
+- Android / mobile nodes
+- Guardrails / content filtering
+
+---
+
+## Architecture (V1)
+
+```
+User (HTTP) --> Gateway (:8000) --> Controller (:8001)
+                                          |
+                                    SQLite Registry
+                                    Task Router
+                                          |
+                                    Worker (:8002)
+                                          |
+                                    Ollama (:11434)
+```
 
 ```mermaid
 graph TD
-    User([User Client]) --> Gateway[API Gateway]
-    Gateway --> Scheduler[DAG-Based Scheduler]
-    Scheduler --> Controller[Cluster Controller]
-    
-    subgraph Control Plane
-        Controller <--> Ledger[(State Ledger / Raft)]
-    end
-
-    subgraph Private Tailscale Mesh / gRPC
-        Scheduler --> NodeA[Node A: Shared CPU Server]
-        Scheduler --> NodeB[Node B: GPU Worker]
-        Scheduler --> NodeC[Node C: Android Worker]
-    end
-
-    subgraph Node A Services
-        NodeA --> Cache[Semantic Cache]
-        NodeA --> Embed[Embedding Service]
-    end
-
-    subgraph Node B Services
-        NodeB --> LLM[Ollama / llama.cpp]
-    end
-
-    subgraph Node C Services
-        NodeC --> Whisper[Lightweight Whisper / OCR]
-    end
-```
-
-### Core Architecture Components
-
-* **API Gateway:** The ingress controller for client requests. It exposes unified REST and gRPC endpoints, accepts compound execution payloads, and submits tasks to the scheduler.
-* **DAG-Based Scheduler:** The execution brain. It compiles multi-step client requests into a Directed Acyclic Graph (DAG) of tasks. It maps steps to nodes based on network latency, capability match, and real-time resource utilization.
-* **Cluster Controller:** The coordinator for node state, heartbeat monitoring, cryptographic identity verification, and registration. It maintains the control plane but remains out of the data path.
-* **State Ledger:** A replicated, partition-tolerant key-value store (using an embedded Raft consensus algorithm) that tracks node health, resource limits, capability maps, and execution routes.
-* **Node Worker:** A daemon running on each machine that interfaces with local hardware engines (Ollama, llama.cpp, Python runtimes) and streams telemetry back to the controller.
-
----
-
-## Communication Protocol Matrix
-
-To minimize latency and network overhead across local connections, communications are divided into distinct planes:
-
-| Traffic Type | Protocol | Primary Purpose | Rationale |
-| :--- | :--- | :--- | :--- |
-| **Control Plane** | gRPC over Tailscale | Node Registration, Heartbeats, State Sync | Static interface contracts, bidirectional streaming, low CPU overhead. |
-| **Telemetry Plane** | WebSockets | Real-time Dashboard updates | Decouples logging and metric streaming from core scheduling cycles. |
-| **Data Plane (Small)** | gRPC Streams | Token streaming, text prompts, embedding vectors | Minimizes pipeline stalling between sequential LLM inference stages. |
-| **Data Plane (Large)** | HTTP/2 / CAS | Model weights (`.gguf`), media files, artifacts | Content-Addressable Storage (CAS) with direct pull to avoid scheduler bottlenecks. |
-
----
-
-## Network Topology
-
-lfhai assumes a volatile local network environment (consumer Wi-Fi, powerline Ethernet, or local switches). Internal node-to-node routing is managed through a secure mesh, isolating cluster communication from external interfaces.
-
-```
-Internet
-   │ (External Access)
-   ▼
-Cloudflare Tunnel
-   │ (TLS Termination)
-   ▼
-[ API Gateway ]
-   │
-   ├─────── Private Tailscale Mesh (WireGuard) ────────┐
-   │                                                   │
-   ▼                                                   ▼
-[ Node A: CPU Node ] <══════ gRPC (Data) ══════> [ Node B: GPU Node ]
-```
-
-* **Tailscale/WireGuard Mesh:** Every node joins a private, encrypted overlay network. Nodes are addressed by stable, private mesh IPs, bypassing NAT configuration and firewall hurdles.
-* **Cloudflare Tunnel (Optional):** Used strictly for client-side ingress to the API Gateway from outside the local network. Internal node-to-node traffic never leaves the local mesh.
-
----
-
-## Request Execution Flow (DAG Model)
-
-In contrast to linear inference pipelines, lfhai schedules requests as execution graphs. The scheduler resolves dependency paths, matches stages against hardware capacities, and schedules concurrent paths.
-
-```mermaid
-graph TD
-    Query([Incoming User Prompt]) --> CacheSearch{Semantic Cache Search}
-    
-    CacheSearch -- Match Found --> Return[Return Cached Response]
-    
-    CacheSearch -- Cache Miss --> Split[Compile Task Graph]
-    
-    Split --> TaskEmbed[Generate Vector Embeddings]
-    Split --> TaskOCR[Run Image OCR]
-    
-    TaskEmbed --> TaskRAG[Retrieve Context Documents]
-    TaskOCR --> TaskCombine[Combine Context & Payload]
-    TaskRAG --> TaskCombine
-    
-    TaskCombine --> TaskLLM[Execute Primary LLM Task]
-    TaskLLM --> TaskGuard[Run Toxicity & Guardrail Verification]
-    TaskGuard --> Return
+    User([User]) --> Gateway[Gateway :8000]
+    Gateway --> Controller[Controller :8001]
+    Controller --> Registry[(SQLite)]
+    Controller --> Router{Router}
+    Router --> Worker1[Worker A :8002]
+    Router --> Worker2[Worker B :8002]
+    Worker1 --> Ollama1[Ollama :11434]
+    Worker2 --> Ollama2[Ollama :11434]
 ```
 
 ---
 
-## Target Hardware Profile (3-Node MVP Cluster)
+## CLI Reference
 
-The MVP targets three mismatched physical systems to validate the scheduling engine and fault tolerance model.
-
-### 1. Controller & Storage Node (Shared CPU Server)
-* **Hardware:** Intel Xeon CPU (12 Cores), 120GB RAM, 1TB NVMe SSD.
-* **Primary Role:** Cluster Gateway, Cluster Controller, Raft Ledger, Semantic Cache (KV Database), RAG Vector Database.
-* **Storage Path:** Houses global model repository (`/srv/models`) and semantic cache snapshots.
-
-### 2. Primary Inference Node (GPU Workstation)
-* **Hardware:** AMD Ryzen 5, 16GB RAM, NVIDIA RTX 3060 (12GB VRAM).
-* **Primary Role:** Heavy LLM inference.
-* **Execution Daemon:** Runs the local worker runtime wrapping Ollama/llama.cpp to serve quantized weights (e.g., Llama-3-8B-Q4_K_M).
-
-### 3. Edge / Multimodal Node (Legacy PC or Android Phone)
-* **Hardware:** Android Phone (Snapdragon 8 Gen 1, 6GB RAM, running Termux) or Legacy PC (GT 710, 8GB RAM).
-* **Primary Role:** Voice transcription (Whisper-tiny), image preprocessing/OCR, local state logging.
+```
+lfh status                    # Show cluster health
+lfh nodes                     # List all registered nodes
+lfh models                    # List available models across cluster
+lfh chat <model> <prompt>     # Submit a chat request
+lfh chat --stream <model> <prompt>  # Stream response
+lfh worker start              # Start worker on this machine
+lfh worker status             # Check local worker status
+lfh controller                # Start the controller
+lfh gateway                   # Start the gateway
+```
 
 ---
 
-## Directory Structure
+## API Endpoints
+
+### Gateway (port 8000)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
+| GET | `/v1/models` | List available models |
+| GET | `/v1/nodes` | List cluster nodes |
+| GET | `/health` | Health check |
+
+### Controller (port 8001)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/nodes/register` | Register a worker node |
+| POST | `/api/v1/nodes/heartbeat` | Send heartbeat telemetry |
+| GET | `/api/v1/nodes` | List all nodes |
+| GET | `/api/v1/nodes/{id}` | Get node details |
+| DELETE | `/api/v1/nodes/{id}` | Remove a node |
+| POST | `/v1/chat/completions` | Route chat to best worker |
+| GET | `/v1/models` | List all models |
+| GET | `/api/v1/tasks/{id}` | Get task status |
+
+### Worker (port 8002)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/worker/status` | Worker status + capabilities |
+| POST | `/worker/task` | Execute inference task |
+| GET | `/health` | Health check |
+
+---
+
+## Development
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
+python -m pytest tests/ -v
+
+# Lint
+ruff check lfhai/ tests/
+
+# Format
+ruff format lfhai/ tests/
+```
+
+---
+
+## Project Structure
 
 ```
 lfhai/
-├── core/
-│   ├── scheduler/       # Task Graph (DAG) construction, scheduling algorithms
-│   ├── controller/      # Node coordination, heartbeat checks, registration API
-│   ├── registry/        # Service discovery, cryptographic credential verification
-│   ├── monitoring/      # Prometheus-compatible metric endpoints & collection
-│   ├── semantic-cache/  # Vector similarity cache layer
-│   ├── rag/             # Local database vector indexing and chunking utilities
-│   ├── kv-store/        # Lightweight Raft-backed cluster ledger
-│   └── inference/       # Execution wrappers for Ollama, llama.cpp, and ONNX
-├── agents/              # Local operational routines (logs analysis, diagnostic scripts)
-├── worker/              # Node worker daemon code (runs on all cluster machines)
-├── dashboard/           # Web UI for cluster utilization and DAG flow monitoring
-├── cli/                 # `lfh` command-line utility for cluster control and monitoring
-├── install/             # Cluster installation scripts (`install.sh`)
-├── scripts/             # Internal helper tools and configuration generators
-└── docs/                # Design specifications, API contracts, and guides
+├── lfhai/
+│   ├── __init__.py         # Package init
+│   ├── models.py           # Shared data models (Pydantic)
+│   ├── controller.py       # Cluster controller + HTTP API
+│   ├── worker.py           # Worker daemon + Ollama proxy
+│   ├── gateway.py          # User-facing HTTP gateway
+│   ├── router.py           # Task routing logic
+│   ├── ollama.py           # Ollama API client
+│   ├── registry.py         # SQLite node registry + task store
+│   ├── tailcat.py          # Tailcat encrypted tunnel wrapper
+│   └── cli.py              # lfh CLI tool
+├── tests/
+│   ├── test_models.py      # Model tests (7)
+│   ├── test_registry.py    # Registry tests (7)
+│   ├── test_router.py      # Router tests (3)
+│   └── test_controller.py  # Controller API tests (8)
+├── pyproject.toml          # Project config
+├── install.sh              # Worker provisioning script
+└── V1_PLAN.md              # V1 implementation plan
 ```
 
 ---
 
-## Node Management API Specifications
+## Hardware Requirements
 
-### 1. Node Registration
-A node registers with the Controller immediately upon daemon startup.
+### Minimum V1 Cluster (2 nodes)
 
-* **Endpoint:** `POST /api/v1/nodes/register`
-* **Protocol:** gRPC or REST (HTTP/2)
-* **Request Payload Schema:**
-```json
-{
-  "node_id": "uuid-v4-string",
-  "hostname": "gpu-node-01",
-  "mesh_ip": "100.64.0.5",
-  "resources": {
-    "cores": 6,
-    "memory_bytes": 17179869184,
-    "gpu": {
-      "model": "NVIDIA GeForce RTX 3060",
-      "vram_bytes": 12884901888,
-      "cuda_version": "12.2"
-    },
-    "storage_bytes": 500107862016
-  },
-  "capabilities": [
-    "inference.llama3-8b",
-    "embeddings.text-embedding-3-small"
-  ]
-}
-```
+**Controller Node:**
+- Any machine with Python 3.10+
+- 2+ CPU cores, 4GB RAM
+- Runs: controller + gateway
 
-### 2. Heartbeat Telemetry
-The Node Worker sends heartbeats every 2.5 seconds. If 3 consecutive heartbeats are missed, the node is flagged as offline and tasks are rescheduled.
+**Worker Node:**
+- Machine with Ollama installed
+- GPU recommended (NVIDIA CUDA)
+- Runs: worker daemon + Ollama
 
-* **Endpoint:** `POST /api/v1/nodes/heartbeat`
-* **Protocol:** gRPC Stream / REST
-* **Telemetry Payload Schema:**
-```json
-{
-  "node_id": "uuid-v4-string",
-  "timestamp": 1719999000,
-  "metrics": {
-    "cpu_usage_pct": 14.5,
-    "memory_used_bytes": 8589934592,
-    "gpu_usage_pct": 82.0,
-    "gpu_vram_used_bytes": 10737418240,
-    "gpu_temp_celsius": 68.0,
-    "disk_free_bytes": 240518172672
-  }
-}
+### Optional: Tailcat Encrypted Tunnels
+
+If nodes are on different networks, install [tailcat](https://github.com/tailscale/tailcat) for encrypted tunnels:
+
+```bash
+# macOS
+brew install tailcat
+
+# Go
+go install github.com/tailscale/tailcat/cmd/tailcat@latest
 ```
 
 ---
 
-## Phased Implementation Roadmap
+## Roadmap
 
-### Phase 1: Steel Thread MVP (Core Connectivity)
-* Build the base `install.sh` provisioning pipeline to install Docker, configure a Tailscale client interface, and bootstrap the `worker` daemon.
-* Implement static registration and 2.5-second heartbeat telemetry intervals.
-* Construct a naive Router that delegates LLM tasks to the GPU node and semantic check queries to the CPU node.
+### V1 (Current) - Basic Routing
+- [x] Node registration + heartbeat
+- [x] Capability-aware routing
+- [x] Ollama integration
+- [x] OpenAI-compatible API
+- [x] CLI tool
+- [x] Tests (25 passing)
 
-### Phase 2: Fault-Tolerant Topology
-* Integrate the Raft consensus engine in `core/kv-store` to replicate node tables and route maps.
-* Implement node-failure detection logic (heartbeat expiration).
-* Introduce automated task re-queuing and failover routes for warm replica models.
+### V2 - Networking
+- [ ] Tailcat tunnel integration
+- [ ] Multi-controller support
+- [ ] Node-to-node direct communication
 
-### Phase 3: Graph Engine (DAG Scheduling)
-* Implement the dynamic Task Graph Compiler in `core/scheduler`.
-* Optimize scheduling computations to evaluate system memory constraints and network link latencies.
-* Implement parallel execution paths inside the node worker (e.g., streaming audio transcription and vector RAG querying concurrently).
+### V3 - Intelligence
+- [ ] DAG scheduling (multi-step prompts)
+- [ ] Semantic caching
+- [ ] RAG support
+- [ ] Embedding routing
 
----
-
-## Operational Safety
-
-To preserve cluster stability, operations are governed by strict safety bounds:
-
-> [!WARNING]
-> Node recovery scripts execute within sandboxed namespaces with restricted shell privileges. Autonomous agents cannot modify host configuration files outside their container volume bounds.
-
-> [!NOTE]
-> System topology modifications (e.g., adding or removing a persistent Node, model-version updates) require manual administrator approval via the Command Line Interface (`lfh admin approve`) or the Cluster Dashboard.
+### V4 - Scale
+- [ ] Dashboard / web UI
+- [ ] Raft consensus
+- [ ] Android / mobile nodes
+- [ ] Guardrails
