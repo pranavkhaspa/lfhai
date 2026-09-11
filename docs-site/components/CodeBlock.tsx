@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Copy, Check } from "lucide-react";
-import clsx from "clsx";
 
 interface CodeBlockProps {
   code: string;
@@ -14,7 +13,6 @@ interface CodeBlockProps {
 
 export function CodeBlock({
   code,
-  language = "bash",
   filename,
   showLineNumbers = false,
   copyButton = true,
@@ -30,50 +28,46 @@ export function CodeBlock({
   const lines = code.split("\n");
 
   return (
-    <div className="group relative rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-950 dark:bg-neutral-900 overflow-hidden my-6">
-      {/* Header */}
-      {(filename || copyButton) && (
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-800 bg-neutral-900 dark:bg-neutral-950">
-          <div className="flex items-center gap-2">
-            {filename && (
-              <span className="text-xs font-medium text-neutral-400 font-mono">
-                {filename}
-              </span>
-            )}
-          </div>
-          {copyButton && (
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-            >
-              {copied ? (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  Copied
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy
-                </>
-              )}
-            </button>
-          )}
+    <div className="my-6 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-900 dark:border-zinc-800">
+      {/* Window chrome */}
+      <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-950/60 px-4 py-2.5">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+          <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+          <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
         </div>
-      )}
+        {filename && (
+          <span className="flex-1 truncate text-center font-mono text-[11px] text-zinc-500">
+            {filename}
+          </span>
+        )}
+        {copyButton && (
+          <button
+            onClick={handleCopy}
+            aria-label="Copy code"
+            className="flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 hover:text-zinc-200 transition-colors"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-400" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
+      </div>
 
       {/* Code */}
       <div className="overflow-x-auto">
-        <pre className="p-4 text-sm leading-relaxed">
-          <code>
+        <pre className="p-4 text-[13px] leading-relaxed">
+          <code className="font-mono">
             {lines.map((line, i) => (
               <div key={i} className="flex">
                 {showLineNumbers && (
-                  <span className="inline-block w-8 text-right pr-4 text-neutral-600 select-none text-xs leading-relaxed">
+                  <span className="w-8 shrink-0 select-none pr-4 text-right text-[11px] leading-relaxed text-zinc-600">
                     {i + 1}
                   </span>
                 )}
-                <span className="text-neutral-300">{line}</span>
+                <span className="whitespace-pre text-zinc-300">{line}</span>
               </div>
             ))}
           </code>
@@ -83,9 +77,9 @@ export function CodeBlock({
   );
 }
 
-export function InlineCode({ children }: { children: React.ReactNode }) {
+export function InlineCode({ children }: { children: ReactNode }) {
   return (
-    <code className="rounded-md bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 text-sm font-mono font-medium text-brand-700 dark:text-brand-300 border border-neutral-200 dark:border-neutral-700">
+    <code className="rounded-md border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 font-mono text-[13px] font-medium text-zinc-800 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
       {children}
     </code>
   );

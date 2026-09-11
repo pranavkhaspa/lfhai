@@ -1,166 +1,155 @@
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { TerminalBlock } from "@/components/TerminalBlock";
-import {
-  ArrowRight,
-  Cpu,
-  Globe,
-  Shield,
-  Zap,
-  Server,
-  Layers,
-} from "lucide-react";
+import { InstallCommand } from "@/components/InstallCommand";
+import { CodeBlock } from "@/components/CodeBlock";
+
+const REPO = "https://github.com/pranavkhaspa/lfhai";
 
 const features = [
   {
-    icon: Cpu,
-    title: "Heterogeneous Hardware",
+    n: "01",
+    title: "Any hardware",
     description:
-      "Mix and match GPUs, CPUs, and edge devices. lfhai routes tasks to whichever node has the right hardware.",
+      "GPUs, CPUs, and edge devices in one cluster. lfhai routes each request to the machine best suited for it.",
   },
   {
-    icon: Globe,
-    title: "Local-First Networking",
+    n: "02",
+    title: "One API",
     description:
-      "Encrypted tunnels via tailcat. No cloud dependencies, no accounts required. Your data stays on your machines.",
+      "OpenAI-compatible endpoints make lfhai a drop-in replacement. Swap your provider and nothing else changes.",
   },
   {
-    icon: Shield,
-    title: "OpenAI-Compatible API",
+    n: "03",
+    title: "Private by default",
     description:
-      "Drop-in replacement for OpenAI endpoints. Use any client library that speaks the chat completions protocol.",
+      "Everything runs on your machines. Optional tailcat tunnels encrypt node-to-node traffic without accounts.",
   },
   {
-    icon: Zap,
-    title: "Capability-Aware Routing",
+    n: "04",
+    title: "Self-healing",
     description:
-      "The scheduler knows which node has which model, GPU, and VRAM. Tasks go to the optimal machine automatically.",
+      "Workers report health every three seconds. Failures are detected automatically and requests re-routed.",
   },
   {
-    icon: Server,
-    title: "Heartbeat Monitoring",
+    n: "05",
+    title: "Ollama-powered",
     description:
-      "Nodes self-report health every 3 seconds. Dead nodes are detected and removed from routing automatically.",
+      "Run any model Ollama supports — quantized weights served from local VRAM, tuned per-machine.",
   },
   {
-    icon: Layers,
-    title: "Ollama Integration",
+    n: "06",
+    title: "Open source",
     description:
-      "Wraps Ollama's inference engine. Run any model Ollama supports, distributed across your cluster.",
+      "MIT licensed. A single Python package you can read, audit, and extend. No telemetry, no lock-in.",
   },
 ];
 
 const steps = [
   {
-    step: "1",
     title: "Start the controller",
-    description: "On any machine in your network",
+    text: "Any machine coordinates the cluster. It routes requests and tracks node health — no GPU needed.",
     code: "lfh controller",
   },
   {
-    step: "2",
-    title: "Start a worker",
-    description: "On each GPU/CPU machine with Ollama",
-    code: "lfh worker start -c http://controller:8001",
+    title: "Add workers",
+    text: "Run the worker on each machine with Ollama. Hardware and models are detected automatically.",
+    code: "lfh worker start -c http://host:8001",
   },
   {
-    step: "3",
     title: "Send requests",
-    description: "Route through the unified API",
-    code: 'curl -X POST http://controller:8000/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model":"llama3","messages":[{"role":"user","content":"Hello!"}]}\'',
+    text: "One endpoint for every model across every node. Stream or wait — the API speaks OpenAI.",
+    code: `curl ${"http://host:8000"}/v1/chat/completions \\
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}'`,
   },
 ];
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen">
       <Header />
 
       {/* Hero */}
       <section className="relative overflow-hidden">
-        {/* Background gradient */}
-        <div className="absolute inset-0 bg-gradient-to-b from-brand-50/50 via-white to-white dark:from-brand-950/30 dark:via-neutral-950 dark:to-neutral-950" />
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-brand-400/10 dark:bg-brand-600/5 rounded-full blur-3xl" />
+        {/* Subtle radial wash */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-[560px] bg-[radial-gradient(60%_60%_at_50%_0%,#e0e7ff_0%,transparent_100%)] opacity-60 dark:bg-[radial-gradient(60%_60%_at_50%_0%,#312e81_0%,transparent_100%)] dark:opacity-40"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[linear-gradient(to_bottom,transparent,#ffffff)] dark:bg-[linear-gradient(to_bottom,transparent,#09090b)]"
+        />
 
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-20 pb-24 sm:pt-28 sm:pb-32">
-          <div className="text-center max-w-4xl mx-auto">
-            <div className="inline-flex items-center gap-2 rounded-full border border-brand-200 dark:border-brand-800 bg-brand-50 dark:bg-brand-950 px-4 py-1.5 mb-8">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-500" />
-              </span>
-              <span className="text-sm font-medium text-brand-700 dark:text-brand-300">
-                V1 Released &mdash; Now with working inference routing
-              </span>
-            </div>
-
-            <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-neutral-900 dark:text-white">
-              One API.{" "}
-              <span className="bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-transparent">
-                Every machine.
-              </span>
+        <div className="relative mx-auto max-w-7xl px-4 pb-24 pt-24 sm:px-6 lg:px-8 sm:pt-32">
+          <div className="mx-auto max-w-3xl text-center">
+            <p className="mb-6 font-mono text-xs uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-400">
+              v1.0 · Local-first heterogeneous AI runtime
+            </p>
+            <h1 className="text-balance text-4xl font-semibold leading-[1.08] tracking-tight text-zinc-950 sm:text-5xl md:text-6xl dark:text-white">
+              AI inference across every machine you own.
             </h1>
-            <p className="mt-6 text-xl text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto leading-relaxed">
-              lfhai coordinates mismatched consumer hardware into a unified AI
-              inference system. GPUs, CPUs, old laptops &mdash; they all become
-              one cluster.
+            <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-zinc-600 dark:text-zinc-300">
+              lfhai spreads LLM workloads across your GPUs, CPUs, and edge
+              devices through one OpenAI-compatible API. Local-first, private,
+              and free to self-host.
             </p>
 
-            <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+            <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Link
                 href="/docs/quickstart"
-                className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-3.5 text-sm font-semibold text-white shadow-xl shadow-brand-600/25 hover:bg-brand-700 hover:shadow-brand-600/40 transition-all"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-700 sm:w-auto dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
               >
-                Get Started
+                Deploy a cluster
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
-                href="/docs/install"
-                className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-6 py-3.5 text-sm font-semibold text-neutral-900 dark:text-white hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+                href="/docs"
+                className="inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-5 py-2.5 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-50 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
-                Install
+                Read the docs
               </Link>
             </div>
+          </div>
 
-            {/* Quick install */}
-            <div className="mt-10 max-w-xl mx-auto">
-              <TerminalBlock
-                command="curl -fsSL https://lfhai.dev/install.sh | bash"
-                label="Quick Install"
-                variant="install"
-              />
-            </div>
+          {/* Install terminal */}
+          <div className="mx-auto mt-16 max-w-2xl">
+            <InstallCommand label="shell" />
+            <p className="mt-3 text-center text-xs text-zinc-400 dark:text-zinc-400">
+              Installs lfhai, Ollama, and a worker on any machine.
+            </p>
           </div>
         </div>
       </section>
 
       {/* Features */}
-      <section className="py-24 bg-neutral-50 dark:bg-neutral-900/50 border-y border-neutral-200 dark:border-neutral-800">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white">
-              Why lfhai?
+      <section className="border-y border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+        <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8">
+          <div className="mb-16 grid gap-8 md:grid-cols-2 md:items-end">
+            <h2 className="max-w-md text-3xl font-semibold tracking-tight text-zinc-950 sm:text-4xl dark:text-white">
+              A cluster that behaves like one machine.
             </h2>
-            <p className="mt-4 text-lg text-neutral-600 dark:text-neutral-400 max-w-2xl mx-auto">
-              Stop buying expensive GPU clusters. Use what you already have.
+            <p className="max-w-md text-base leading-relaxed text-zinc-600 dark:text-zinc-300">
+              lfhai gives you the properties of a data-center cluster — routing,
+              failover, a unified API — without the data center, or the bill.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature) => (
+          <div className="grid gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-800 sm:grid-cols-2 lg:grid-cols-3">
+            {features.map((f) => (
               <div
-                key={feature.title}
-                className="group rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-6 hover:border-brand-300 dark:hover:border-brand-700 hover:shadow-lg hover:shadow-brand-600/5 transition-all"
+                key={f.n}
+                className="group bg-white p-7 transition-colors hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900"
               >
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400 mb-4 group-hover:bg-brand-100 dark:group-hover:bg-brand-900 transition-colors">
-                  <feature.icon className="h-6 w-6" />
-                </div>
-                <h3 className="text-lg font-semibold text-neutral-900 dark:text-white mb-2">
-                  {feature.title}
+                <p className="font-mono text-xs text-zinc-300 transition-colors group-hover:text-brand-500 dark:text-zinc-600 dark:group-hover:text-brand-400">
+                  {f.n}
+                </p>
+                <h3 className="mt-3 text-[15px] font-semibold text-zinc-900 dark:text-white">
+                  {f.title}
                 </h3>
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                  {feature.description}
+                <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  {f.description}
                 </p>
               </div>
             ))}
@@ -169,113 +158,146 @@ export default function HomePage() {
       </section>
 
       {/* How it works */}
-      <section className="py-24">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white">
-              Three steps to your first cluster
-            </h2>
-            <p className="mt-4 text-lg text-neutral-600 dark:text-neutral-400">
-              From zero to distributed inference in under a minute.
+      <section className="mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8">
+        <div className="grid gap-16 lg:grid-cols-2 lg:gap-24">
+          <div>
+            <p className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-400">
+              Quickstart
             </p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {steps.map((step) => (
-              <div key={step.step} className="relative">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-600 text-white font-bold text-sm">
-                    {step.step}
-                  </div>
+            <h2 className="text-3xl font-semibold tracking-tight text-zinc-950 sm:text-4xl dark:text-white">
+              Three commands to a cluster.
+            </h2>
+            <div className="mt-10 space-y-10">
+              {steps.map((step, i) => (
+                <div key={step.title} className="flex gap-5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-300 font-mono text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+                    {i + 1}
+                  </span>
                   <div>
-                    <h3 className="text-lg font-semibold text-neutral-900 dark:text-white">
+                    <h3 className="text-[15px] font-semibold text-zinc-900 dark:text-white">
                       {step.title}
                     </h3>
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                      {step.description}
+                    <p className="mt-1.5 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+                      {step.text}
                     </p>
+                    <CodeBlock code={step.code} filename="terminal" copyButton={false} />
                   </div>
                 </div>
-                <TerminalBlock command={step.code} variant="highlight" />
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
 
-      {/* Architecture diagram */}
-      <section className="py-24 bg-neutral-50 dark:bg-neutral-900/50 border-y border-neutral-200 dark:border-neutral-800">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white mb-4">
-            How it works
-          </h2>
-          <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-12">
-            Requests flow through the gateway to the controller, which routes
-            them to the optimal worker node.
-          </p>
-
-          <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-8 shadow-xl">
-            <div className="font-mono text-sm text-left text-neutral-700 dark:text-neutral-300 space-y-2">
-              <div className="flex items-center gap-3">
-                <span className="text-neutral-400">User</span>
-                <span className="text-neutral-300">&rarr;</span>
-                <span className="rounded-lg bg-brand-100 dark:bg-brand-900 text-brand-700 dark:text-brand-300 px-3 py-1 font-medium">
-                  Gateway :8000
-                </span>
-                <span className="text-neutral-300">&rarr;</span>
-                <span className="rounded-lg bg-brand-100 dark:bg-brand-900 text-brand-700 dark:text-brand-300 px-3 py-1 font-medium">
-                  Controller :8001
-                </span>
+          <div className="lg:pt-24">
+            <p className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-400">
+              Architecture
+            </p>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">
+              Gateway → Controller → Workers
+            </h3>
+            <div className="mt-6 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                </div>
               </div>
-              <div className="pl-32 text-neutral-400">|</div>
-              <div className="pl-32 text-neutral-400">&darr; SQLite + Router</div>
-              <div className="pl-32 text-neutral-400">|</div>
-              <div className="flex items-center gap-3 pl-32">
-                <span className="text-neutral-300">&rarr;</span>
-                <span className="rounded-lg bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 px-3 py-1 font-medium">
-                  Worker (GPU) :8002
-                </span>
-                <span className="text-neutral-400">&rarr;</span>
-                <span className="rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 px-3 py-1">
-                  Ollama :11434
-                </span>
-              </div>
-              <div className="flex items-center gap-3 pl-32">
-                <span className="text-neutral-300">&rarr;</span>
-                <span className="rounded-lg bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 px-3 py-1 font-medium">
-                  Worker (CPU) :8002
-                </span>
-                <span className="text-neutral-400">&rarr;</span>
-                <span className="rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 px-3 py-1">
-                  Ollama :11434
-                </span>
+              <div className="p-5">
+                <div className="font-mono text-[13px] leading-8">
+                  <div className="flex items-center gap-2">
+                    <span className="text-zinc-400">client</span>
+                    <span className="text-zinc-300">→</span>
+                    <Node name="Gateway · :8000" />
+                  </div>
+                  <div className="flex items-center gap-2 pl-8">
+                    <span className="text-zinc-400">→</span>
+                    <Node name="Controller · :8001" tone="brand" />
+                  </div>
+                  <div className="pl-16 font-mono text-[11px] text-zinc-400">
+                    ├─ registry · routing · health
+                  </div>
+                  <div className="flex items-center gap-2 pl-8">
+                    <span className="text-zinc-400">→</span>
+                    <Node name="Worker · :8002" tone="outline" />
+                    <span className="text-zinc-400">→</span>
+                    <span className="rounded-md border border-zinc-200 px-2 py-0.5 text-zinc-400 dark:border-zinc-700">
+                      Ollama
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 pl-8">
+                    <span className="text-zinc-400">→</span>
+                    <Node name="Worker · :8002" tone="outline" />
+                    <span className="text-zinc-400">→</span>
+                    <span className="rounded-md border border-zinc-200 px-2 py-0.5 text-zinc-400 dark:border-zinc-700">
+                      Ollama
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
+            <p className="mt-3 text-xs leading-relaxed text-zinc-400 dark:text-zinc-400">
+              Every node registers, reports capability, and runs whichever model
+              it can. The controller never touches model weights.
+            </p>
           </div>
         </div>
       </section>
 
       {/* CTA */}
-      <section className="py-24">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-neutral-900 dark:text-white mb-4">
-            Ready to cluster your hardware?
+      <section className="border-t border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+        <div className="mx-auto max-w-3xl px-4 py-24 text-center sm:px-6 lg:px-8">
+          <h2 className="text-3xl font-semibold tracking-tight text-zinc-950 sm:text-4xl dark:text-white">
+            Cluster the machines you already own.
           </h2>
-          <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-10">
-            Install lfhai and turn your scattered machines into a unified AI
-            inference system.
+          <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-zinc-600 dark:text-zinc-300">
+            Started with an old server and a gaming PC. Ends with a private
+            inference cluster that answers, streams, and heals itself.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <TerminalBlock
-              command="pip install lfhai"
-              label="Install"
-              variant="install"
-            />
+          <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link
+              href="/docs/quickstart"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-700 sm:w-auto dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+            >
+              Get started
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <a
+              href={REPO}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-5 py-2.5 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-50 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Star on GitHub
+            </a>
           </div>
         </div>
       </section>
 
       <Footer />
     </div>
+  );
+}
+
+function Node({
+  name,
+  tone = "default",
+}: {
+  name: string;
+  tone?: "default" | "brand" | "outline";
+}) {
+  const tones = {
+    default: "border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-200",
+    brand:
+      "border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-900/60 dark:bg-brand-950/50 dark:text-brand-300",
+    outline:
+      "border-zinc-200 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300",
+  } as const;
+
+  return (
+    <span
+      className={`rounded-md border px-2 py-0.5 ${tones[tone]}`}
+    >
+      {name}
+    </span>
   );
 }

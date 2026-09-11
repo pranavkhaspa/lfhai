@@ -1,12 +1,13 @@
 import { CodeBlock, InlineCode } from "@/components/CodeBlock";
 import { TerminalBlock } from "@/components/TerminalBlock";
+import { InstallCommand } from "@/components/InstallCommand";
 import { Callout } from "@/components/Callout";
 
 export default function InstallPage() {
   return (
     <div className="doc-content">
       <h1>Installation</h1>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400">
+      <p className="text-lg text-zinc-600 dark:text-zinc-300">
         Install lfhai on any machine running Linux or macOS.
       </p>
 
@@ -15,11 +16,7 @@ export default function InstallPage() {
         The fastest way to install lfhai and its dependencies (including
         Ollama):
       </p>
-      <TerminalBlock
-        command="curl -fsSL https://lfhai.dev/install.sh | bash"
-        label="One-line install"
-        variant="install"
-      />
+      <InstallCommand label="One-line install" />
 
       <p>This script will:</p>
       <ul>
@@ -35,7 +32,7 @@ export default function InstallPage() {
         Clone the repository and install in development mode:
       </p>
       <CodeBlock
-        code={`git clone https://github.com/your-org/lfhai.git
+        code={`git clone https://github.com/pranavkhaspa/lfhai.git
 cd lfhai
 python3 -m venv .venv
 source .venv/bin/activate

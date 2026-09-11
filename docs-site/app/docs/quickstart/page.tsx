@@ -1,12 +1,13 @@
 import { CodeBlock, InlineCode } from "@/components/CodeBlock";
 import { TerminalBlock } from "@/components/TerminalBlock";
+import { InstallCommand } from "@/components/InstallCommand";
 import { Callout } from "@/components/Callout";
 
 export default function QuickstartPage() {
   return (
     <div className="doc-content">
       <h1>Quickstart</h1>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400">
+      <p className="text-lg text-zinc-600 dark:text-zinc-300">
         Get lfhai running on two machines in under 5 minutes.
       </p>
 
@@ -19,21 +20,13 @@ export default function QuickstartPage() {
 
       <h2>Step 1: Install lfhai</h2>
       <p>On both machines, install lfhai:</p>
-      <TerminalBlock
-        command="curl -fsSL https://lfhai.dev/install.sh | bash"
-        label="Machine 1 & 2"
-        variant="install"
-      />
+      <InstallCommand label="Machine 1 & 2" />
 
       <h2>Step 2: Start the Controller</h2>
       <p>
         On the machine that will coordinate the cluster (any machine works):
       </p>
-      <TerminalBlock
-        command="lfh controller"
-        label="Controller machine"
-        variant="highlight"
-      />
+      <TerminalBlock command="lfh controller" label="Controller machine" />
 
       <p>
         The controller starts on <code>:8001</code> by default. Note the IP
@@ -52,7 +45,6 @@ export default function QuickstartPage() {
       <TerminalBlock
         command="lfh worker start -c http://<controller-ip>:8001"
         label="GPU machine"
-        variant="highlight"
       />
 
       <p>The worker will:</p>
@@ -84,7 +76,6 @@ Nodes (1):
       <TerminalBlock
         command='lfh chat llama3.2 "What is the capital of France?"'
         label="Any machine"
-        variant="highlight"
       />
 
       <p>Or use curl directly:</p>

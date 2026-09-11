@@ -5,7 +5,7 @@ export default function ConfigurationPage() {
   return (
     <div className="doc-content">
       <h1>Configuration</h1>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400">
+      <p className="text-lg text-zinc-600 dark:text-zinc-300">
         Configure lfhai components via CLI flags and environment variables.
       </p>
 
@@ -182,7 +182,7 @@ sudo systemctl restart lfhai-worker`}
         </tbody>
       </table>
 
-      <Callout type="tip">
+      <Callout type="warning">
         All ports can be changed via CLI flags. Make sure firewall rules allow
         traffic on the configured ports between cluster machines.
       </Callout>

@@ -6,7 +6,7 @@ export default function CLIPage() {
   return (
     <div className="doc-content">
       <h1>CLI Reference</h1>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400">
+      <p className="text-lg text-zinc-600 dark:text-zinc-300">
         The <code>lfh</code> command is the primary interface for managing your
         lfhai cluster.
       </p>
@@ -76,7 +76,6 @@ Options:
       <TerminalBlock
         command='lfh chat --stream llama3.2 "Tell me a joke"'
         label="Streaming"
-        variant="highlight"
       />
 
       <h3>lfh controller</h3>
@@ -124,10 +123,9 @@ Options:
       <TerminalBlock
         command="lfh worker start -c http://192.168.1.100:8001 -p 8003"
         label="Custom controller and port"
-        variant="highlight"
       />
 
-      <Callout type="tip">
+      <Callout type="info">
         Run <code>lfh worker start</code> on each machine that should
         participate in the cluster. The worker auto-detects GPU, models, and
         hardware capabilities.

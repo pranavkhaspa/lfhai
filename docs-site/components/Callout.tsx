@@ -1,65 +1,40 @@
 "use client";
 
-import React from "react";
-import { AlertTriangle, Info, CheckCircle2, Lightbulb } from "lucide-react";
+import type { ReactNode } from "react";
+import { Info, AlertTriangle, CheckCircle2 } from "lucide-react";
 import clsx from "clsx";
 
 interface CalloutProps {
-  type?: "info" | "warning" | "success" | "tip";
-  children: React.ReactNode;
+  type?: "info" | "warning" | "success";
+  title?: string;
+  children: ReactNode;
 }
 
 const icons = {
   info: Info,
   warning: AlertTriangle,
   success: CheckCircle2,
-  tip: Lightbulb,
 };
 
-const styles = {
-  info: {
-    bg: "bg-blue-50 dark:bg-blue-950/50",
-    border: "border-blue-200 dark:border-blue-800",
-    icon: "text-blue-600 dark:text-blue-400",
-    title: "text-blue-900 dark:text-blue-200",
-  },
-  warning: {
-    bg: "bg-amber-50 dark:bg-amber-950/50",
-    border: "border-amber-200 dark:border-amber-800",
-    icon: "text-amber-600 dark:text-amber-400",
-    title: "text-amber-900 dark:text-amber-200",
-  },
-  success: {
-    bg: "bg-emerald-50 dark:bg-emerald-950/50",
-    border: "border-emerald-200 dark:border-emerald-800",
-    icon: "text-emerald-600 dark:text-emerald-400",
-    title: "text-emerald-900 dark:text-emerald-200",
-  },
-  tip: {
-    bg: "bg-violet-50 dark:bg-violet-950/50",
-    border: "border-violet-200 dark:border-violet-800",
-    icon: "text-violet-600 dark:text-violet-400",
-    title: "text-violet-900 dark:text-violet-200",
-  },
+const accent = {
+  info: "text-brand-500",
+  warning: "text-amber-500",
+  success: "text-emerald-500",
 };
 
-export function Callout({ type = "info", children }: CalloutProps) {
+export function Callout({ type = "info", title, children }: CalloutProps) {
   const Icon = icons[type];
-  const style = styles[type];
 
   return (
-    <div
-      className={clsx(
-        "rounded-xl border p-4 my-6",
-        style.bg,
-        style.border
-      )}
-    >
-      <div className="flex gap-3">
-        <Icon className={clsx("h-5 w-5 mt-0.5 shrink-0", style.icon)} />
-        <div className="doc-content text-sm leading-relaxed min-w-0">
-          {children}
-        </div>
+    <div className="my-6 flex gap-3.5 rounded-xl border border-zinc-200 bg-zinc-50/70 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+      <Icon className={clsx("mt-0.5 h-4 w-4 shrink-0", accent[type])} />
+      <div className="min-w-0 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+        {title && (
+          <p className="mb-1 text-sm font-semibold text-zinc-900 dark:text-white">
+            {title}
+          </p>
+        )}
+        <div className="[&>p:last-child]:mb-0">{children}</div>
       </div>
     </div>
   );

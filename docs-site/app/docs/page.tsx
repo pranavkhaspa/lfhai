@@ -5,7 +5,7 @@ export default function DocsIndex() {
   return (
     <div className="doc-content">
       <h1>lfhai Documentation</h1>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400">
+      <p className="text-lg text-zinc-600 dark:text-zinc-300">
         Welcome to lfhai &mdash; the local-first heterogeneous AI runtime.
         Coordinate mismatched consumer hardware into a unified AI inference
         system.
@@ -76,13 +76,13 @@ export default function DocsIndex() {
           <Link
             key={item.href}
             href={item.href}
-            className="group flex flex-col rounded-xl border border-neutral-200 dark:border-neutral-800 p-5 hover:border-brand-300 dark:hover:border-brand-700 hover:shadow-lg hover:shadow-brand-600/5 transition-all"
+            className="group flex flex-col rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 transition-colors hover:border-brand-300 dark:hover:border-brand-700"
           >
-            <h3 className="text-base font-semibold text-neutral-900 dark:text-white group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
+            <h3 className="text-base font-semibold text-zinc-900 group-hover:text-zinc-900 dark:text-white dark:group-hover:text-white transition-colors">
               {item.title}
               <ArrowRight className="inline-block ml-1.5 h-4 w-4 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
             </h3>
-            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
               {item.description}
             </p>
           </Link>

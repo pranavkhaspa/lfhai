@@ -5,7 +5,7 @@ export default function ArchitecturePage() {
   return (
     <div className="doc-content">
       <h1>Architecture</h1>
-      <p className="text-lg text-neutral-600 dark:text-neutral-400">
+      <p className="text-lg text-zinc-600 dark:text-zinc-300">
         How lfhai coordinates heterogeneous hardware into a unified AI
         inference system.
       </p>

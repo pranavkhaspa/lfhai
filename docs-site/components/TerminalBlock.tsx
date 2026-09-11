@@ -1,18 +1,23 @@
 "use client";
 
-import { useState } from "react";
-import { Copy, Check, Terminal } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Copy, Check } from "lucide-react";
+import clsx from "clsx";
+
+export type TerminalVariant = "default" | "accent";
 
 interface TerminalBlockProps {
   command: string;
   label?: string;
-  variant?: "default" | "install" | "highlight";
+  variant?: TerminalVariant;
+  children?: ReactNode;
 }
 
 export function TerminalBlock({
   command,
   label,
   variant = "default",
+  children,
 }: TerminalBlockProps) {
   const [copied, setCopied] = useState(false);
 
@@ -23,46 +28,50 @@ export function TerminalBlock({
   };
 
   return (
-    <div
-      className={`group relative rounded-xl border overflow-hidden my-6 ${
-        variant === "install"
-          ? "border-brand-300 dark:border-brand-700 bg-gradient-to-br from-brand-50 to-white dark:from-brand-950 dark:to-neutral-900"
-          : variant === "highlight"
-            ? "border-emerald-300 dark:border-emerald-700 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950 dark:to-neutral-900"
-            : "border-neutral-200 dark:border-neutral-800 bg-neutral-950"
-      }`}
-    >
-      {(label || true) && (
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-200 dark:border-neutral-800 bg-white/50 dark:bg-neutral-900/50">
-          <div className="flex items-center gap-2">
-            <Terminal className="h-3.5 w-3.5 text-neutral-400" />
-            <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
-              {label || "Terminal"}
-            </span>
-          </div>
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-          >
-            {copied ? (
-              <>
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="h-3.5 w-3.5" />
-                Copy
-              </>
-            )}
-          </button>
+    <div className="my-6 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      {/* Window chrome */}
+      <div className="flex items-center gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+          <span className="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+          <span className="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
         </div>
-      )}
-      <div className="px-4 py-3 flex items-center gap-3">
-        <span className="text-brand-500 dark:text-brand-400 font-mono text-sm select-none">$</span>
-        <code className="font-mono text-sm text-neutral-800 dark:text-neutral-200 break-all">
-          {command}
-        </code>
+        {label && (
+          <span className="flex-1 truncate text-center font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+            {label}
+          </span>
+        )}
+        <button
+          onClick={handleCopy}
+          aria-label="Copy command"
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-500" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
+
+      {/* Command body */}
+      <div className="px-4 py-3.5">
+        <div className="flex items-start gap-2.5">
+          <span
+            className={clsx(
+              "mt-px select-none font-mono text-sm",
+              variant === "accent"
+                ? "text-brand-500 dark:text-brand-400"
+                : "text-zinc-400"
+            )}
+          >
+            $
+          </span>
+          <code className="break-all font-mono text-[13px] leading-relaxed text-zinc-800 dark:text-zinc-200">
+            {command}
+          </code>
+        </div>
+        {children}
       </div>
     </div>
   );

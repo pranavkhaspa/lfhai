@@ -1,10 +1,31 @@
 import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "lfhai - Local-First Heterogeneous AI Runtime",
+  title: {
+    default: "lfhai — Local-First Heterogeneous AI Runtime",
+    template: "%s · lfhai",
+  },
   description:
-    "Coordinate mismatched consumer hardware into a unified AI inference system. Route LLM tasks across GPU nodes, CPU servers, and edge devices.",
+    "One OpenAI-compatible API that spreads AI inference across your GPUs, CPUs, and edge devices. Local-first, private, no accounts.",
+  openGraph: {
+    title: "lfhai — Local-First Heterogeneous AI Runtime",
+    description:
+      "One API. Every machine. Spread AI inference across the hardware you already own.",
+  },
 };
 
 export default function RootLayout({
@@ -17,7 +38,9 @@ export default function RootLayout({
       <head>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </head>
-      <body className="min-h-screen bg-white dark:bg-neutral-950 antialiased">
+      <body
+        className={`${inter.variable} ${jetbrains.variable} min-h-screen bg-white font-sans text-zinc-950 antialiased dark:bg-zinc-950 dark:text-zinc-200`}
+      >
         {children}
       </body>
     </html>
