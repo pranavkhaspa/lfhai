@@ -24,6 +24,7 @@ export default function InstallPage() {
         <li>Install Ollama (if not present)</li>
         <li>Pull a default model if no models exist</li>
         <li>Install lfhai into <code>~/.lfhai/venv</code></li>
+        <li>Place <code>lfh</code> on your PATH (via <code>~/.local/bin</code>)</li>
         <li>Join the cluster (if a <code>--join-token</code> is provided)</li>
         <li>Create and start a systemd service (Linux only)</li>
       </ul>

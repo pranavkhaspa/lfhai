@@ -128,7 +128,20 @@ else
 fi
 
 echo "  lfhai installed ✓ ($LFHAI_BIN/lfh)"
-PATH="$LFHAI_BIN:$PATH"
+
+# Put lfh on PATH permanently so it works in any new shell
+echo "  Linking lfh into \$PATH..."
+mkdir -p "$HOME/.local/bin"
+ln -sf "$LFHAI_BIN/lfh" "$HOME/.local/bin/lfh"
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.zshrc" 2>/dev/null \
+        || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+    grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" 2>/dev/null \
+        || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+echo "  lfh on PATH ✓ (new shells automatically; this one too)"
+export PATH="$LFHAI_BIN:$PATH"
 
 # Join the cluster (required once per machine, before the worker can register)
 JOINED=0
