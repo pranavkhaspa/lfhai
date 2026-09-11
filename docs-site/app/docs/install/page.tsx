@@ -85,12 +85,12 @@ pip install -e ".[dev]"`}
       <h2>Install the Package</h2>
       <p>
         The one-line installer pulls the packaged wheel from this site
-        (<code>/lfhai-0.1.4-py3-none-any.whl</code>) so no repo access or
+        (<code>/lfhai-0.1.5-py3-none-any.whl</code>) so no repo access or
         credentials are needed. To install the package directly into the
         current Python environment:
       </p>
       <TerminalBlock
-        command={`pip install https://lfhai.vercel.app/lfhai-0.1.4-py3-none-any.whl`}
+        command={`pip install https://lfhai.vercel.app/lfhai-0.1.5-py3-none-any.whl`}
         label="pip"
       />
 
@@ -125,7 +125,7 @@ pip install -e ".[dev]"`}
           app (defaults to <code>http://localhost:11434</code>).
         </li>
         <li>
-          <code>pip install https://lfhai.vercel.app/lfhai-0.1.4-py3-none-any.whl</code>
+          <code>pip install https://lfhai.vercel.app/lfhai-0.1.5-py3-none-any.whl</code>
         </li>
         <li>
           Join the cluster and start the worker:

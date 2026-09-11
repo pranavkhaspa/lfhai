@@ -156,7 +156,9 @@ async def test_registration_preserves_node_secret(client):
 async def test_chat_completions_route(client, monkeypatch):
     """The OpenAI-compatible chat route must dispatch to a worker and return
     a valid completion (regression: SubmitTaskRequest had no task_id)."""
-    await join_node(client, hostname="gpu-node")
+    creds = await join_node(client, hostname="gpu-node")
+    resp = await register_node(client, creds)
+    assert resp.status_code == 200, resp.text
 
     async def fake_dispatch(url, payload, auth=None):
         return {"message": {"content": "hello from worker"}, "eval_count": 7}
@@ -266,7 +268,9 @@ async def test_controller_dispatch_sends_bearer_auth():
 async def test_chat_completions_without_dispatch_secret(client):
     """If the controller has no learned secret for the chosen node, dispatch
     must be refused (503) rather than sent unauthenticated."""
-    await join_node(client, hostname="gpu-node")
+    creds = await join_node(client, hostname="gpu-node")
+    resp = await register_node(client, creds)
+    assert resp.status_code == 200, resp.text
     node = await controller_module.router.route("llama3")
     controller_module._node_secrets.pop(node.node_id)
 

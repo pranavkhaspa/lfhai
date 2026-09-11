@@ -306,6 +306,14 @@ class NodeRegistry:
         rows = await cursor2.fetchall()
         return [row["node_id"] for row in rows]
 
+    async def set_node_status(self, node_id: str, status: str) -> bool:
+        """Force a node's status (e.g. pending after join, before first heartbeat)."""
+        cursor = await self._db.execute(
+            "UPDATE nodes SET status = ? WHERE node_id = ?", (status, node_id)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
     async def remove_node(self, node_id: str) -> bool:
         cursor = await self._db.execute("DELETE FROM nodes WHERE node_id = ?", (node_id,))
         await self._db.commit()

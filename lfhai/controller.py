@@ -17,6 +17,7 @@ from lfhai.models import (
     JoinRequest,
     JoinResponse,
     NodeInfo,
+    NodeStatus,
     SubmitTaskRequest,
 )
 from lfhai.registry import NodeRegistry, TaskStore
@@ -110,6 +111,9 @@ async def join_cluster(req: JoinRequest) -> JoinResponse:
     await registry.set_node_secret(registered.node_id, node_secret)
     await registry.mark_join_token_used(token_id, registered.node_id, registered.hostname)
     _node_secrets[registered.node_id] = node_secret
+    # Joined nodes are placeholders until the worker registers/heartbeats;
+    # keep them out of routing in the meantime.
+    await registry.set_node_status(registered.node_id, NodeStatus.PENDING.value)
 
     logger.info("Node joined cluster: %s (%s)", registered.hostname, registered.node_id)
     return JoinResponse(node_id=registered.node_id, node_secret=node_secret)

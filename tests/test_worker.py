@@ -75,6 +75,31 @@ async def test_task_streaming(client):
 
 
 @pytest.mark.asyncio
+async def test_task_stream_error_ends_gracefully(client):
+    """If Ollama dies mid-stream, the worker must emit an error event and a
+    trailing [DONE] instead of hanging the proxy upstream."""
+
+    class FailingOllama:
+        async def _stream_chat(self, payload):
+            yield {"message": {"role": "assistant", "content": "partial"}}
+            raise RuntimeError("mock ollama died")
+
+    worker_module.ollama_client = FailingOllama()
+
+    resp = await client.post(
+        "/worker/task",
+        json={**TASK, "stream": True},
+        headers={"Authorization": "Bearer test-secret"},
+    )
+    assert resp.status_code == 200
+    body = "".join([c.decode() async for c in resp.aiter_bytes()])
+    assert "partial" in body
+    assert '"error"' in body
+    assert '"message":' in body
+    assert "[DONE]" in body
+
+
+@pytest.mark.asyncio
 async def test_cancel_requires_auth(client):
     resp = await client.post("/worker/cancel/abc")
     assert resp.status_code == 401

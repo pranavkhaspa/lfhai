@@ -220,26 +220,35 @@ async def execute_task(task: dict, request: Request) -> dict:
                 # Translate Ollama's native chunk format into an
                 # OpenAI-compatible SSE stream so every upstream proxy
                 # (controller, gateway) stays transparent.
-                async for chunk in ollama_client._stream_chat({
-                    "model": model,
-                    "messages": messages,
-                    "stream": True,
-                    "options": {"temperature": temperature},
-                }):
-                    delta = (chunk.get("message") or {}).get("content", "")
-                    if not delta:
-                        # Skip metadata-only events (e.g. {"done": true})
-                        continue
-                    event = {
-                        "id": task.get("task_id", ""),
-                        "object": "chat.completion.chunk",
-                        "model": chunk.get("model", model),
-                        "choices": [
-                            {"index": 0, "delta": {"content": delta}, "finish_reason": None}
-                        ],
-                    }
-                    yield f"data: {json.dumps(event)}\n\n"
-                yield "data: [DONE]\n\n"
+                try:
+                    async for chunk in ollama_client._stream_chat({
+                        "model": model,
+                        "messages": messages,
+                        "stream": True,
+                        "options": {"temperature": temperature},
+                    }):
+                        delta = (chunk.get("message") or {}).get("content", "")
+                        if not delta:
+                            # Skip metadata-only events (e.g. {"done": true})
+                            continue
+                        event = {
+                            "id": task.get("task_id", ""),
+                            "object": "chat.completion.chunk",
+                            "model": chunk.get("model", model),
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": delta},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield f"data: {json.dumps(event)}\n\n"
+                except Exception as e:
+                    logger.error("Streaming task failed: %s", e)
+                    yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
+                finally:
+                    yield "data: [DONE]\n\n"
 
             return StreamingResponse(stream_result(), media_type="text/event-stream")
         else:

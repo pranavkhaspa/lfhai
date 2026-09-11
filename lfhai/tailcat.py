@@ -1,9 +1,13 @@
 """Tailcat networking layer for lfhai.
 
-Wraps the tailcat binary to provide encrypted tunnels between nodes
-without requiring Tailscale accounts.
+Wraps the tailcat binary (https://github.com/tailscale/tailcat) to provide
+encrypted tunnels between nodes without requiring Tailscale accounts.
 
-Usage:
+Verified against the real `tailcat serve --json`, `tailcat ping` and
+`tailcat forward` subcommands.
+
+Usage::
+
     # Server side (controller):
     server = TailcatServer()
     await server.start()
@@ -11,16 +15,16 @@ Usage:
 
     # Client side (worker):
     client = TailcatClient(server_address)
-    await client.connect()
-    # Now communicate through the tunnel
+    connected = await client.connect()  # tailcat ping
+    tunnel = await client.forward_port(8001, 8001)  # port forward
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
-import subprocess
 
 logger = logging.getLogger("lfhai.tailcat")
 
@@ -48,12 +52,15 @@ def ensure_tailcat() -> str:
 
 
 class TailcatServer:
-    """A tailcat listener that accepts connections from workers."""
+    """A tailcat listener that accepts connections from workers.
+
+    Uses ``tailcat serve --json [ports...]`` which writes
+    ``{"listenAddr": "tc..."}`` to stdout before accepting connections.
+    """
 
     def __init__(self) -> None:
-        self._process: subprocess.Popen | None = None
+        self._process: asyncio.subprocess.Process | None = None
         self._address: str = ""
-        self._port: int = 0
 
     @property
     def address(self) -> str:
@@ -61,55 +68,68 @@ class TailcatServer:
 
     @property
     def is_running(self) -> bool:
-        return self._process is not None and self._process.poll() is None
+        return self._process is not None and self._process.returncode is None
 
     async def start(self, port: int = 0) -> str:
-        """Start a tailcat server and return the connection address.
+        """Start a tailcat server and return the ``tc...`` connection address.
 
         Args:
-            port: Port to serve on. 0 = random available port.
+            port: Port to serve on. 0 = accept a single connection on any
+                  port (pipe to stdout).
         """
         binary = ensure_tailcat()
-        cmd = [binary, "serve", str(port)] if port else [binary, "serve"]
+        cmd = [binary, "serve", "--json"]
+        if port:
+            cmd.append(str(port))
 
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+        self._process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
-        # Read the address from stderr (tailcat prints it there)
-        # We need to read a few lines to get the address
-        import time
+        # The --json flag writes a single JSON object to stdout, then blocks.
+        deadline = asyncio.get_event_loop().time() + 10
+        while asyncio.get_event_loop().time() < deadline:
+            if self._process.stdout:
+                try:
+                    line = await asyncio.wait_for(self._process.stdout.readline(), timeout=2)
+                except asyncio.TimeoutError:
+                    pass
+                else:
+                    if line:
+                        try:
+                            data = json.loads(line.decode())
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            pass
+                        else:
+                            addr = data.get("listenAddr", "")
+                            if addr.startswith("tc"):
+                                self._address = addr
+                                logger.info("Tailcat server listening: %s", self._address)
+                                return self._address
 
-        deadline = time.time() + 10  # 10 second timeout
-        while time.time() < deadline:
-            if self._process.stderr:
-                line = self._process.stderr.readline()
-                if "address:" in line.lower() or "listening" in line.lower():
-                    # Extract the tc... address
-                    for word in line.split():
-                        if word.startswith("tc"):
-                            self._address = word.strip()
-                            logger.info("Tailcat server listening: %s", self._address)
-                            return self._address
-            if self._process.poll() is not None:
-                break
+            if self._process.returncode is not None:
+                stderr = b""
+                if self._process.stderr:
+                    stderr = await self._process.stderr.read()
+                raise TailcatError(
+                    f"Failed to start tailcat server or get address: "
+                    f"exited with code {self._process.returncode}: "
+                    f"{stderr.decode(errors='replace')}"
+                )
             await asyncio.sleep(0.1)
 
+        # Cleanup on timeout
+        self.stop()
         raise TailcatError("Failed to start tailcat server or get address")
 
     def stop(self):
         """Stop the tailcat server."""
-        if self._process:
+        if self._process and self._process.returncode is None:
             self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-            self._process = None
-            self._address = ""
+        self._process = None
+        self._address = ""
 
     async def __aenter__(self):
         await self.start()
@@ -120,55 +140,63 @@ class TailcatServer:
 
 
 class TailcatClient:
-    """A tailcat client that connects to a server's tunnel."""
+    """A tailcat client that connects to a server's tunnel.
+
+    Uses ``tailcat ping <address>`` for connectivity checks and
+    ``tailcat forward <address> <local>:<remote>`` for port forwarding.
+    """
 
     def __init__(self, server_address: str) -> None:
         self._address = server_address
-        self._process: subprocess.Popen | None = None
+        self._process: asyncio.subprocess.Process | None = None
 
     @property
     def is_connected(self) -> bool:
-        return self._process is not None and self._process.poll() is None
+        return self._process is not None and self._process.returncode is None
 
-    async def connect(self) -> bool:
+    async def connect(self, timeout: float = 15) -> bool:
         """Connect to the tailcat server.
 
-        Returns True if connection was established.
+        Runs ``tailcat ping <address>`` (non-blocking, exits with 0 on
+        success).
         """
         binary = ensure_tailcat()
         cmd = [binary, "ping", self._address]
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode == 0:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            if proc.returncode == 0:
                 logger.info("Connected to tailcat server: %s", self._address)
                 return True
-            else:
-                logger.warning("Tailcat ping failed: %s", result.stderr)
-                return False
-        except subprocess.TimeoutExpired:
+            stderr = b""
+            if proc.stderr:
+                stderr = await proc.stderr.read()
+            logger.warning(
+                "Tailcat ping failed (rc=%d): %s", proc.returncode,
+                stderr.decode(errors="replace"),
+            )
+            return False
+        except asyncio.TimeoutError:
             logger.warning("Tailcat connection timed out")
             return False
 
-    async def forward_port(self, local_port: int, remote_port: int) -> subprocess.Popen | None:
+    async def forward_port(
+        self, local_port: int, remote_port: int
+    ) -> asyncio.subprocess.Process | None:
         """Forward a local port to the remote server through tailcat."""
         binary = ensure_tailcat()
-        cmd = [
-            binary, "forward",
-            self._address,
-            f"{local_port}:{remote_port}",
-        ]
+        cmd = [binary, "forward", self._address, f"{local_port}:{remote_port}"]
 
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             logger.info("Forwarding local:%d -> remote:%d via tailcat", local_port, remote_port)
             return process
@@ -178,13 +206,9 @@ class TailcatClient:
 
     def disconnect(self):
         """Disconnect from the server."""
-        if self._process:
+        if self._process and self._process.returncode is None:
             self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-            self._process = None
+        self._process = None
 
 
 class TailcatTunnel:

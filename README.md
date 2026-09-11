@@ -2,7 +2,7 @@
 
 lfhai is a distributed, local-first compute fabric and runtime designed to coordinate mismatched, resource-constrained consumer hardware into a unified AI system. Rather than relying on uniform cluster topologies (like homogeneous GPU nodes), lfhai abstracts heterogeneous hardware—such as standard consumer GPUs, older CPUs, mobile devices, and shared local servers—into a single execution layer.
 
-**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, worker auth, and CLI are working. 50 tests passing (unit + live end-to-end cluster test against a stub Ollama).
+**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, worker auth, and CLI are working. 64 tests passing (unit + live end-to-end cluster tests against stub Ollama).
 
 ---
 
@@ -41,8 +41,8 @@ lfh status
 | **Gateway** | Working | OpenAI-compatible HTTP API (streaming + non-streaming) |
 | **CLI** | Working | `lfh` command: status, chat, nodes, models, worker start |
 | **Router** | Working | GPU-preferring, capability-aware node selection |
-| **Tailcat** | Implemented (unverified) | Encrypted tunnel wrapper (needs tailcat binary installed) |
-| **Tests** | 50 passing | Unit + live E2E (controller+worker+gateway against stub Ollama) |
+| **Tailcat** | Verified (real binary) | Encrypted tunnel wrapper — `serve --json`/`ping` tested against the real tailcat binary |
+| **Tests** | 64 passing | Unit + live E2E (multi-node controller+worker+gateway against stub Ollama) |
 | **install.sh** | Ready | Worker provisioning script (Ollama + lfhai + systemd) |
 
 ### What V1 Does NOT Include (Future)
@@ -218,7 +218,9 @@ lfhai/
 
 **Worker Node:**
 - Machine with Ollama installed
-- GPU recommended (NVIDIA CUDA)
+- GPU recommended (NVIDIA CUDA) but **CPU-only works fully** — Ollama has a
+  CPU mode, and the router prefers whichever ONLINE node advertises the
+  requested model (GPU is a tie-breaker, never a requirement)
 - Runs: worker daemon + Ollama
 
 ### Supported Platforms
@@ -231,7 +233,7 @@ native installers for all three.
 - **Windows:** `install.sh` is POSIX-only (bash + systemd), but the CLI works
   natively. Install Python, then:
   ```powershell
-  pip install https://lfhai.vercel.app/lfhai-0.1.4-py3-none-any.whl
+  pip install https://lfhai.vercel.app/lfhai-0.1.5-py3-none-any.whl
   lfh node join <token>
   lfh worker start
   ```
@@ -266,10 +268,12 @@ go install github.com/tailscale/tailcat/cmd/tailcat@latest
 - [x] Ollama integration
 - [x] OpenAI-compatible API
 - [x] CLI tool
-- [x] Tests (25 passing)
+- [x] CPU-only worker support (Ollama CPU mode)
+- [x] Worker dispatch authentication (per-node secrets)
+- [x] Live multi-node E2E test (64 passing)
 
 ### V2 - Networking
-- [ ] Tailcat tunnel integration
+- [x] Tailcat tunnel integration (verified against the real binary)
 - [ ] Multi-controller support
 - [ ] Node-to-node direct communication
 

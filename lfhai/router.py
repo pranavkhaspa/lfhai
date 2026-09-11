@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lfhai.models import NodeInfo
+from lfhai.models import NodeInfo, NodeStatus
 from lfhai.registry import NodeRegistry
 
 
@@ -28,15 +28,16 @@ class TaskRouter:
         if nodes:
             return self._pick_best(nodes)
 
-        # Fall back: any node with a GPU
+        # Fall back: any online node with a GPU
         all_nodes = await self.registry.list_nodes()
-        gpu_nodes = [n for n in all_nodes if n.capabilities.has_gpu]
+        online_nodes = [n for n in all_nodes if n.status == NodeStatus.ONLINE]
+        gpu_nodes = [n for n in online_nodes if n.capabilities.has_gpu]
         if gpu_nodes:
             return self._pick_best(gpu_nodes)
 
         # Last resort: any online node
-        if all_nodes:
-            return self._pick_best(all_nodes)
+        if online_nodes:
+            return self._pick_best(online_nodes)
 
         return None
 

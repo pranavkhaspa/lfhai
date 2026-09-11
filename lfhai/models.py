@@ -14,6 +14,9 @@ class NodeStatus(str, Enum):
     ONLINE = "online"
     OFFLINE = "offline"
     BUSY = "busy"
+    # Joined via token but worker has not yet registered/heartbeat.
+    # Not routable until the worker reports in.
+    PENDING = "pending"
 
 
 class GPUInfo(BaseModel):
