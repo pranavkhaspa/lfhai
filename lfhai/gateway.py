@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
@@ -13,24 +14,48 @@ from lfhai.models import SubmitTaskRequest
 
 logger = logging.getLogger("lfhai.gateway")
 
-app = FastAPI(title="lfhai Gateway", version="0.1.0")
-
 controller_url: str = "http://localhost:8001"
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     logger.info("Gateway started, controller at %s", controller_url)
+    yield
+
+
+app = FastAPI(title="lfhai Gateway", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: SubmitTaskRequest) -> dict:
-    """OpenAI-compatible chat completions endpoint."""
+async def chat_completions(req: SubmitTaskRequest):
+    """OpenAI-compatible chat completions endpoint.
+
+    Supports both non-streaming (returns JSON) and streaming (proxies the
+    downstream SSE stream) requests on the same endpoint.
+    """
+    payload = req.model_dump()
+
+    if req.stream:
+        async def proxy_stream():
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{controller_url}/v1/chat/completions",
+                        json=payload,
+                    ) as resp:
+                        async for chunk in resp.aiter_bytes():
+                            yield chunk
+            except httpx.ConnectError:
+                pass
+
+        return StreamingResponse(proxy_stream(), media_type="text/event-stream")
+
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
                 f"{controller_url}/v1/chat/completions",
-                json=req.model_dump(),
+                json=payload,
             )
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)

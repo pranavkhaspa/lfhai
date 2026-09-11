@@ -8,7 +8,7 @@ import platform
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from lfhai.models import (
@@ -32,6 +32,15 @@ node_secret: str = ""
 heartbeat_interval: float = 3.0
 ollama_url: str = "http://localhost:11434"
 ollama_client: OllamaClient | None = None
+
+
+def _verify_worker_auth(authorization: str | None) -> bool:
+    """Return True if the Authorization header matches the local node secret."""
+    import hmac
+    if not node_secret:
+        return False
+    expected = f"Bearer {node_secret}"
+    return hmac.compare_digest(authorization or "", expected)
 
 
 def _get_local_ip() -> str:
@@ -191,8 +200,10 @@ async def worker_status() -> dict:
 
 
 @app.post("/worker/task")
-async def execute_task(task: dict) -> dict:
+async def execute_task(task: dict, request: Request) -> dict:
     """Execute an inference task via Ollama and return the result."""
+    if not _verify_worker_auth(request.headers.get("authorization")):
+        raise HTTPException(status_code=401, detail="Not authorized")
     model = task.get("model", "llama3")
     messages = task.get("messages", [])
     temperature = task.get("temperature", 0.7)
@@ -203,15 +214,31 @@ async def execute_task(task: dict) -> dict:
 
     try:
         if stream:
+            import json
+
             async def stream_result():
+                # Translate Ollama's native chunk format into an
+                # OpenAI-compatible SSE stream so every upstream proxy
+                # (controller, gateway) stays transparent.
                 async for chunk in ollama_client._stream_chat({
                     "model": model,
                     "messages": messages,
                     "stream": True,
                     "options": {"temperature": temperature},
                 }):
-                    import json
-                    yield f"data: {json.dumps(chunk)}\n\n"
+                    delta = (chunk.get("message") or {}).get("content", "")
+                    if not delta:
+                        # Skip metadata-only events (e.g. {"done": true})
+                        continue
+                    event = {
+                        "id": task.get("task_id", ""),
+                        "object": "chat.completion.chunk",
+                        "model": chunk.get("model", model),
+                        "choices": [
+                            {"index": 0, "delta": {"content": delta}, "finish_reason": None}
+                        ],
+                    }
+                    yield f"data: {json.dumps(event)}\n\n"
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(stream_result(), media_type="text/event-stream")
@@ -227,7 +254,9 @@ async def execute_task(task: dict) -> dict:
 
 
 @app.post("/worker/cancel/{task_id}")
-async def cancel_task(task_id: str) -> dict:
+async def cancel_task(task_id: str, request: Request) -> dict:
+    if not _verify_worker_auth(request.headers.get("authorization")):
+        raise HTTPException(status_code=401, detail="Not authorized")
     # V1: no cancellation support, just acknowledge
     return {"status": "not_supported", "task_id": task_id}
 
@@ -243,6 +272,7 @@ def run_worker(
     worker_port: int = 8002,
     ollama: str = "http://localhost:11434",
     credentials: str | None = None,
+    advertise_ip: str | None = None,
 ):
     global controller_url, node_id, node_secret, ollama_client, ollama_url
 
@@ -273,6 +303,8 @@ def run_worker(
     async def _amain() -> None:
         # Detect hardware
         resources = _get_system_resources()
+        if advertise_ip:
+            resources = resources.model_copy(update={"ip": advertise_ip})
         models = await detect_models()
 
         capabilities = NodeCapabilities(
@@ -286,6 +318,7 @@ def run_worker(
             hostname=resources.hostname,
             resources=resources,
             capabilities=capabilities,
+            api_port=worker_port,
         )
 
         logger.info("Worker starting on %s:%d", resources.ip, worker_port)

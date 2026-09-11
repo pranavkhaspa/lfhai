@@ -171,7 +171,9 @@ def worker():
 @click.option("--port", "-p", default=8002, help="Worker HTTP port")
 @click.option("--ollama-url", "-o", default="http://localhost:11434", help="Ollama API URL")
 @click.option("--credentials", "-cr", default=None, help="Credential file path")
-def worker_start(controller_url, port, ollama_url, credentials):
+@click.option("--advertise-ip", default=None,
+              help="IP advertised to the controller (useful behind NAT/multi-homed)")
+def worker_start(controller_url, port, ollama_url, credentials, advertise_ip):
     """Start a worker daemon on this machine."""
     from lfhai.worker import run_worker
     run_worker(
@@ -179,6 +181,7 @@ def worker_start(controller_url, port, ollama_url, credentials):
         worker_port=port,
         ollama=ollama_url,
         credentials=credentials,
+        advertise_ip=advertise_ip,
     )
 
 

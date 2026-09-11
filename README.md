@@ -2,7 +2,7 @@
 
 lfhai is a distributed, local-first compute fabric and runtime designed to coordinate mismatched, resource-constrained consumer hardware into a unified AI system. Rather than relying on uniform cluster topologies (like homogeneous GPU nodes), lfhai abstracts heterogeneous hardware—such as standard consumer GPUs, older CPUs, mobile devices, and shared local servers—into a single execution layer.
 
-**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, and CLI are working. 39 tests passing.
+**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, worker auth, and CLI are working. 50 tests passing (unit + live end-to-end cluster test against a stub Ollama).
 
 ---
 
@@ -41,8 +41,8 @@ lfh status
 | **Gateway** | Working | OpenAI-compatible HTTP API (streaming + non-streaming) |
 | **CLI** | Working | `lfh` command: status, chat, nodes, models, worker start |
 | **Router** | Working | GPU-preferring, capability-aware node selection |
-| **Tailcat** | Ready | Encrypted tunnel wrapper (needs tailcat binary installed) |
-| **Tests** | 39 passing | Models, registry, router, controller API, join-token auth |
+| **Tailcat** | Implemented (unverified) | Encrypted tunnel wrapper (needs tailcat binary installed) |
+| **Tests** | 50 passing | Unit + live E2E (controller+worker+gateway against stub Ollama) |
 | **install.sh** | Ready | Worker provisioning script (Ollama + lfhai + systemd) |
 
 ### What V1 Does NOT Include (Future)
@@ -194,10 +194,12 @@ lfhai/
 │   ├── tailcat.py          # Tailcat encrypted tunnel wrapper
 │   └── cli.py              # lfh CLI tool
 ├── tests/
-│   ├── test_models.py      # Model tests (7)
-│   ├── test_registry.py    # Registry tests (7)
-│   ├── test_router.py      # Router tests (3)
-│   └── test_controller.py  # Controller API tests (8)
+│   ├── test_models.py       # Model tests (7)
+│   ├── test_registry.py     # Registry tests (15)
+│   ├── test_router.py       # Router tests (3)
+│   ├── test_controller.py   # Controller API tests (18)
+│   ├── test_worker.py       # Worker dispatch auth tests (6)
+│   └── e2e/                 # Live cluster test (1)
 ├── pyproject.toml          # Project config
 ├── install.sh              # Worker provisioning script
 └── V1_PLAN.md              # V1 implementation plan
@@ -218,6 +220,29 @@ lfhai/
 - Machine with Ollama installed
 - GPU recommended (NVIDIA CUDA)
 - Runs: worker daemon + Ollama
+
+### Supported Platforms
+
+The lfhai runtime (controller, gateway, worker) is pure Python and works on
+**Linux, macOS, and Windows natively** — it speaks HTTP to Ollama, which ships
+native installers for all three.
+
+- **Linux / macOS:** use the one-line installer (`install.sh`).
+- **Windows:** `install.sh` is POSIX-only (bash + systemd), but the CLI works
+  natively. Install Python, then:
+  ```powershell
+  pip install https://lfhai.vercel.app/lfhai-0.1.4-py3-none-any.whl
+  lfh node join <token>
+  lfh worker start
+  ```
+  pointing `--ollama-url` at the Windows [Ollama](https://ollama.com/download/windows)
+  default (`http://localhost:11434`). Open TCP 8000/8001/8002 in Windows
+  Firewall to accept connections from other nodes.
+- **WSL2:** gives you the full `install.sh` experience (systemd is supported),
+  including the auto-start systemd service.
+- **Android (roadmap):** the node is a plain Python process talking HTTP, so it
+  is runnable under Termux + proot-distro once a bundled Ollama is available
+  there.
 
 ### Optional: Tailcat Encrypted Tunnels
 

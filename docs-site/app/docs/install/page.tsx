@@ -85,12 +85,12 @@ pip install -e ".[dev]"`}
       <h2>Install the Package</h2>
       <p>
         The one-line installer pulls the packaged wheel from this site
-        (<code>/lfhai-0.1.1-py3-none-any.whl</code>) so no repo access or
+        (<code>/lfhai-0.1.4-py3-none-any.whl</code>) so no repo access or
         credentials are needed. To install the package directly into the
         current Python environment:
       </p>
       <TerminalBlock
-        command={`pip install https://lfhai.vercel.app/lfhai-0.1.1-py3-none-any.whl`}
+        command={`pip install https://lfhai.vercel.app/lfhai-0.1.4-py3-none-any.whl`}
         label="pip"
       />
 
@@ -110,6 +110,39 @@ pip install -e ".[dev]"`}
         command="ollama pull llama3.2"
         label="Pull a model"
       />
+
+      <h2>Windows (native)</h2>
+      <p>
+        The installer script is POSIX-only (bash + systemd), but lfhai itself
+        is pure Python and runs natively on Windows. Do not use WSL unless you
+        want the full one-click experience — WSL2 gives you the complete{" "}
+        <code>install.sh</code> path. For native Windows:
+      </p>
+      <ol>
+        <li>
+          Install Python 3.10+ and the Windows{" "}
+          <a href="https://ollama.com/download/windows" target="_blank" rel="noopener noreferrer">Ollama</a>{" "}
+          app (defaults to <code>http://localhost:11434</code>).
+        </li>
+        <li>
+          <code>pip install https://lfhai.vercel.app/lfhai-0.1.4-py3-none-any.whl</code>
+        </li>
+        <li>
+          Join the cluster and start the worker:
+          <TerminalBlock
+            command="lfh node join &lt;token&gt;&#10;lfh worker start"
+            label="PowerShell"
+          />
+        </li>
+        <li>
+          Open TCP 8000/8001/8002 in Windows Firewall so other nodes can reach
+          this machine.
+        </li>
+      </ol>
+      <p>
+        Android nodes (roadmap) run the same Python worker under Termux with
+        proot-distro once Ollama is bundled there.
+      </p>
 
       <h2>Install tailcat (Optional)</h2>
       <p>

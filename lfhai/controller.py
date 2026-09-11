@@ -31,6 +31,12 @@ router: TaskRouter | None = None
 controller_db_path: str = "lfhai.db"
 JOIN_GUIDANCE = "Run: lfh node join <token> (get a token with: lfh token create)"
 
+# Plaintext per-node secrets kept in MEMORY ONLY (never written to disk).
+# Recovered from the Authorization header on each register/heartbeat, so a
+# controller restart needs no persisted plaintext. Used to authenticate
+# controller -> worker task dispatch.
+_node_secrets: dict[str, str] = {}
+
 
 def _bearer_secret(authorization: str | None) -> str | None:
     """Extract the raw secret from an Authorization: Bearer header."""
@@ -103,6 +109,7 @@ async def join_cluster(req: JoinRequest) -> JoinResponse:
     node_secret = secrets.token_urlsafe(24)
     await registry.set_node_secret(registered.node_id, node_secret)
     await registry.mark_join_token_used(token_id, registered.node_id, registered.hostname)
+    _node_secrets[registered.node_id] = node_secret
 
     logger.info("Node joined cluster: %s (%s)", registered.hostname, registered.node_id)
     return JoinResponse(node_id=registered.node_id, node_secret=node_secret)
@@ -115,6 +122,8 @@ async def register_node(
     secret = _bearer_secret(authorization)
     if not await registry.verify_node(node.node_id, secret or ""):
         raise HTTPException(status_code=401, detail=f"Not authorized. {JOIN_GUIDANCE}")
+    if secret:
+        _node_secrets[node.node_id] = secret
     registered = await registry.register(node)
     logger.info("Node registered: %s (%s)", registered.hostname, registered.node_id)
     return {"status": "ok", "node_id": registered.node_id}
@@ -130,6 +139,8 @@ async def node_heartbeat(
     secret = _bearer_secret(authorization)
     if not await registry.verify_node(hb.node_id, secret or ""):
         raise HTTPException(status_code=401, detail=f"Not authorized. {JOIN_GUIDANCE}")
+    if secret:
+        _node_secrets[hb.node_id] = secret
     ok = await registry.heartbeat(hb)
     if not ok:
         raise HTTPException(status_code=404, detail="Node not registered")
@@ -160,10 +171,31 @@ async def remove_node(node_id: str) -> dict:
 
 # --- Task Management ---
 
+async def _dispatch_to_worker(
+    worker_url: str,
+    payload: dict,
+    auth: str | None = None,
+    transport=None,
+) -> dict:
+    """Send a (non-streaming) inference task to a worker and return the parsed JSON.
+
+    Streaming requests are proxied separately in chat_completions. Both use
+    the node secret as an Authorization: Bearer credential so only the
+    controller can dispatch work to a node.
+    """
+    import httpx as _httpx
+
+    headers = {"Authorization": f"Bearer {auth}"} if auth else None
+    async with _httpx.AsyncClient(timeout=None, transport=transport) as hc:
+        resp = await hc.post(f"{worker_url}/worker/task", json=payload, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: SubmitTaskRequest) -> dict:
     """OpenAI-compatible chat completions endpoint."""
-    from lfhai.ollama import OllamaClient
+    import httpx as _httpx
 
     node = await router.route(req.model)
     if not node:
@@ -174,69 +206,66 @@ async def chat_completions(req: SubmitTaskRequest) -> dict:
         )
 
     messages = [m.model_dump() for m in req.messages]
+    node_secret = _node_secrets.get(node.node_id)
+    if not node_secret:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No dispatch credential for node '{node.node_id}'. "
+                   "Node must complete register before dispatch.",
+        )
+
     await task_store.create_task(req.task_id, req.model, messages)
     await task_store.update_task(req.task_id, status="dispatched", assigned_node=node.node_id)
 
-    worker_url = f"http://{node.resources.ip}:8002"
-    client = OllamaClient(base_url=worker_url)
+    worker_port = node.api_port or 8002
+    worker_url = f"http://{node.resources.ip}:{worker_port}"
+    payload = {
+        "model": req.model,
+        "messages": messages,
+        "temperature": req.temperature,
+        "stream": req.stream,
+        "task_id": req.task_id,
+    }
 
     try:
         await task_store.update_task(req.task_id, status="running", started_at=time.time())
 
         if req.stream:
-            async def stream_response():
-                try:
-                    async for chunk in client._stream_chat({
-                        "model": req.model,
-                        "messages": messages,
-                        "stream": True,
-                        "options": {"temperature": req.temperature},
-                    }):
-                        import json
-                        yield f"data: {json.dumps(chunk)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    await task_store.update_task(
-                        req.task_id, status="completed", completed_at=time.time()
-                    )
-                except Exception as e:
-                    await task_store.update_task(
-                        req.task_id, status="failed", error=str(e), completed_at=time.time()
-                    )
-                    yield f'data: {{"error": "{str(e)}"}}\n\n'
+            async def proxy_sse():
+                headers = {"Authorization": f"Bearer {node_secret}"}
+                async with _httpx.AsyncClient(timeout=None) as pc:
+                    endpoint = f"{worker_url}/worker/task"
+                    async with pc.stream("POST", endpoint, json=payload, headers=headers) as stream:
+                        async for chunk in stream.aiter_bytes():
+                            yield chunk
 
-            return StreamingResponse(stream_response(), media_type="text/event-stream")
-        else:
-            result = await client.generate(
-                model=req.model,
-                messages=messages,
-                temperature=req.temperature,
-            )
-            await task_store.update_task(
-                req.task_id, status="completed", result=str(result), completed_at=time.time()
-            )
-            return {
-                "id": f"chatcmpl-{req.task_id[:8]}",
-                "object": "chat.completion",
-                "model": req.model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": result.get("message", {}).get("content", ""),
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": result.get("eval_count", {}),
-            }
+            return StreamingResponse(proxy_sse(), media_type="text/event-stream")
+
+        result = await _dispatch_to_worker(worker_url, payload, auth=node_secret)
+        await task_store.update_task(
+            req.task_id, status="completed", result=str(result), completed_at=time.time()
+        )
+        return {
+            "id": f"chatcmpl-{req.task_id[:8]}",
+            "object": "chat.completion",
+            "model": req.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": result.get("message", {}).get("content", ""),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": result.get("eval_count", {}),
+        }
     except Exception as e:
         await task_store.update_task(
             req.task_id, status="failed", error=str(e), completed_at=time.time()
         )
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await client.close()
 
 
 @app.get("/v1/models")

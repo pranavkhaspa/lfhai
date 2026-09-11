@@ -47,6 +47,7 @@ class NodeInfo(BaseModel):
     status: NodeStatus = NodeStatus.ONLINE
     resources: NodeResources = Field(default_factory=NodeResources)
     capabilities: NodeCapabilities = Field(default_factory=NodeCapabilities)
+    api_port: int = 8002
     registered_at: float = Field(default_factory=time.time)
     last_heartbeat: float = Field(default_factory=time.time)
 
@@ -100,6 +101,7 @@ class TaskResponse(BaseModel):
 
 
 class SubmitTaskRequest(BaseModel):
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     model: str = "llama3"
     messages: list[ChatMessage] = Field(default_factory=list)
     stream: bool = False

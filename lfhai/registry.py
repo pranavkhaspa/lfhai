@@ -59,6 +59,7 @@ class NodeRegistry:
                 has_gpu INTEGER DEFAULT 0,
                 capabilities TEXT DEFAULT '[]',
                 node_secret_hash TEXT DEFAULT '',
+                api_port INTEGER DEFAULT 8002,
                 registered_at REAL NOT NULL,
                 last_heartbeat REAL NOT NULL
             );
@@ -88,9 +89,14 @@ class NodeRegistry:
         """)
         # Migration for databases created before node secrets existed
         cols = await self._db.execute("PRAGMA table_info(nodes)")
-        if "node_secret_hash" not in {row["name"] for row in await cols.fetchall()}:
+        col_names = {row["name"] for row in await cols.fetchall()}
+        if "node_secret_hash" not in col_names:
             await self._db.execute(
                 "ALTER TABLE nodes ADD COLUMN node_secret_hash TEXT DEFAULT ''"
+            )
+        if "api_port" not in col_names:
+            await self._db.execute(
+                "ALTER TABLE nodes ADD COLUMN api_port INTEGER DEFAULT 8002"
             )
         await self._db.commit()
 
@@ -108,11 +114,26 @@ class NodeRegistry:
         caps_json = json.dumps(node.capabilities.models)
 
         await self._db.execute(
-            """INSERT OR REPLACE INTO nodes
+            """INSERT INTO nodes
                (node_id, hostname, ip, status, cores, memory_total_bytes, disk_free_bytes,
                 gpu_model, gpu_vram_bytes, cuda_version, has_gpu, capabilities,
-                registered_at, last_heartbeat)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                api_port, registered_at, last_heartbeat)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(node_id) DO UPDATE SET
+                hostname=excluded.hostname,
+                ip=excluded.ip,
+                status=excluded.status,
+                cores=excluded.cores,
+                memory_total_bytes=excluded.memory_total_bytes,
+                disk_free_bytes=excluded.disk_free_bytes,
+                gpu_model=excluded.gpu_model,
+                gpu_vram_bytes=excluded.gpu_vram_bytes,
+                cuda_version=excluded.cuda_version,
+                has_gpu=excluded.has_gpu,
+                capabilities=excluded.capabilities,
+                api_port=excluded.api_port,
+                registered_at=excluded.registered_at,
+                last_heartbeat=excluded.last_heartbeat""",
             (
                 node.node_id,
                 node.hostname,
@@ -126,6 +147,7 @@ class NodeRegistry:
                 node.resources.gpu.cuda_version if node.resources.gpu else "",
                 int(node.capabilities.has_gpu),
                 caps_json,
+                node.api_port,
                 node.registered_at,
                 node.last_heartbeat,
             ),
@@ -320,6 +342,7 @@ class NodeRegistry:
             status=NodeStatus(row["status"]),
             resources=resources,
             capabilities=caps,
+            api_port=row["api_port"],
             registered_at=row["registered_at"],
             last_heartbeat=row["last_heartbeat"],
         )

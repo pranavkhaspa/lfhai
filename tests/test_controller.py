@@ -1,5 +1,6 @@
 """Tests for the controller HTTP API."""
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -131,6 +132,52 @@ async def test_register_with_wrong_secret(client):
 
 
 @pytest.mark.asyncio
+async def test_registration_preserves_node_secret(client):
+    """Heartbeats must keep working after a worker registers (ON CONFLICT
+    UPDATE, not INSERT OR REPLACE, preserves the join-issued credential)."""
+    creds = await join_node(client)
+
+    resp = await register_node(client, creds)
+    assert resp.status_code == 200
+
+    hb = {
+        "node_id": creds["node_id"],
+        "metrics": {"cpu_usage_pct": 10, "memory_used_bytes": 1000},
+    }
+    resp = await client.post(
+        "/api/v1/nodes/heartbeat",
+        json=hb,
+        headers={"Authorization": f"Bearer {creds['node_secret']}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_route(client, monkeypatch):
+    """The OpenAI-compatible chat route must dispatch to a worker and return
+    a valid completion (regression: SubmitTaskRequest had no task_id)."""
+    await join_node(client, hostname="gpu-node")
+
+    async def fake_dispatch(url, payload, auth=None):
+        return {"message": {"content": "hello from worker"}, "eval_count": 7}
+
+    monkeypatch.setattr("lfhai.controller._dispatch_to_worker", fake_dispatch)
+
+    resp = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.7,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["choices"][0]["message"]["content"] == "hello from worker"
+    assert body["id"].startswith("chatcmpl-")
+
+
+@pytest.mark.asyncio
 async def test_get_node(client):
     creds = await join_node(client, hostname="test-host-2")
     resp = await client.get(f"/api/v1/nodes/{creds['node_id']}")
@@ -195,3 +242,40 @@ async def test_list_models(client):
     model_ids = [m["id"] for m in data["data"]]
     assert "llama3" in model_ids
     assert "whisper" in model_ids
+
+
+@pytest.mark.asyncio
+async def test_controller_dispatch_sends_bearer_auth():
+    """Controller -> worker dispatch must carry the node secret as a Bearer
+    credential so workers can reject unauthorized LAN clients."""
+    captured: dict = {}
+
+    def handler(request):
+        captured["authorization"] = request.headers.get("authorization")
+        captured["payload"] = request.read()
+        return httpx.Response(200, json={"message": {"content": "ok"}})
+
+    transport = httpx.MockTransport(handler)
+    await controller_module._dispatch_to_worker(
+        "http://worker:8002", {"model": "llama3"}, auth="s3cret", transport=transport
+    )
+    assert captured["authorization"] == "Bearer s3cret"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_without_dispatch_secret(client):
+    """If the controller has no learned secret for the chosen node, dispatch
+    must be refused (503) rather than sent unauthenticated."""
+    await join_node(client, hostname="gpu-node")
+    node = await controller_module.router.route("llama3")
+    controller_module._node_secrets.pop(node.node_id)
+
+    resp = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "llama3",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.7,
+        },
+    )
+    assert resp.status_code == 503
