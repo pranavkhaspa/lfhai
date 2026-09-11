@@ -11,6 +11,7 @@
 #   bash install.sh [--controller-url http://host:8001] [--port 8002]
 #                   [--ollama-url http://localhost:11434]
 #                   [--join-token HOST:PORT:SECRET]
+#                   [--pip-url https://.../lfhai.whl]
 #
 set -euo pipefail
 
@@ -20,7 +21,7 @@ OLLAMA_URL="http://localhost:11434"
 JOIN_TOKEN="${LFHAI_JOIN_TOKEN:-}"
 LFHAI_ROOT="${LFHAI_ROOT:-$HOME/.lfhai}"
 LFHAI_BIN="$LFHAI_ROOT/venv/bin"
-REPO_URL="https://github.com/pranavkhaspa/lfhai.git"
+LFHAI_WHEEL_URL="${LFHAI_WHEEL_URL:-https://lfhai.vercel.app/lfhai-0.1.0-py3-none-any.whl}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --port) WORKER_PORT="$2"; shift 2 ;;
         --ollama-url) OLLAMA_URL="$2"; shift 2 ;;
         --join-token) JOIN_TOKEN="$2"; shift 2 ;;
+        --pip-url) LFHAI_WHEEL_URL="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -108,19 +110,21 @@ fi
 # Install lfhai
 echo ""
 echo "[3/6] Installing lfhai..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="${BASH_SOURCE[0]:-}"
 mkdir -p "$LFHAI_ROOT"
 
-if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+if [[ -n "$SRC" && -f "$(dirname "$SRC")/pyproject.toml" ]]; then
     # Running from a repository checkout: install the local source.
-    echo "  Installing from source ($SCRIPT_DIR)..."
+    LOCAL_DIR="$(cd "$(dirname "$SRC")" && pwd)"
+    echo "  Installing from source ($LOCAL_DIR)..."
     python3 -m venv "$LFHAI_ROOT/venv"
-    "$LFHAI_BIN/pip" install -e "$SCRIPT_DIR"
+    "$LFHAI_BIN/pip" install -e "$LOCAL_DIR"
 else
-    # Served from the website: install the latest release from GitHub.
-    echo "  Installing from GitHub ($REPO_URL)..."
+    # Served from the website: install the packaged wheel (works even if
+    # the GitHub repo is private, no credentials needed).
+    echo "  Installing from wheel ($LFHAI_WHEEL_URL)..."
     python3 -m venv "$LFHAI_ROOT/venv"
-    "$LFHAI_BIN/pip" install "git+$REPO_URL"
+    "$LFHAI_BIN/pip" install "$LFHAI_WHEEL_URL"
 fi
 
 echo "  lfhai installed ✓ ($LFHAI_BIN/lfh)"

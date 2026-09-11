@@ -81,14 +81,16 @@ pip install -e ".[dev]"`}
         language="bash"
       />
 
-      <h2>Install via pip (from GitHub)</h2>
+      <h2>Install the Package</h2>
       <p>
-        The one-line installer pulls the latest release from GitHub. To install
-        the package directly into the current Python environment:
+        The one-line installer pulls the packaged wheel from this site
+        (<code>/lfhai-0.1.0-py3-none-any.whl</code>) so no repo access or
+        credentials are needed. To install the package directly into the
+        current Python environment:
       </p>
       <TerminalBlock
-        command="pip install git+https://github.com/pranavkhaspa/lfhai.git"
-        label="GitHub"
+        command={`pip install https://lfhai.vercel.app/lfhai-0.1.0-py3-none-any.whl`}
+        label="pip"
       />
 
       <h2>Install Ollama</h2>
