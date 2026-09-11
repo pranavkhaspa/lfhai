@@ -23,9 +23,19 @@ export default function InstallPage() {
         <li>Check for Python 3.10+ (install if missing)</li>
         <li>Install Ollama (if not present)</li>
         <li>Pull a default model if no models exist</li>
-        <li>Install lfhai Python package</li>
-        <li>Create a systemd service (Linux only)</li>
+        <li>Install lfhai into <code>~/.lfhai/venv</code></li>
+        <li>Join the cluster (if a <code>--join-token</code> is provided)</li>
+        <li>Create and start a systemd service (Linux only)</li>
       </ul>
+
+      <p>
+        On each worker machine you can install <em>and</em> join the cluster in
+        a single command. Mint a token on the controller, then run:
+      </p>
+      <TerminalBlock
+        command={`curl -fsSL <site-url>/install.sh | bash -s -- --join-token <token>`}
+        label="Install + join in one command"
+      />
 
       <h2>Join the Cluster</h2>
       <p>
@@ -71,13 +81,14 @@ pip install -e ".[dev]"`}
         language="bash"
       />
 
-      <h2>Install via pip</h2>
+      <h2>Install via pip (from GitHub)</h2>
       <p>
-        Install from PyPI (coming soon):
+        The one-line installer pulls the latest release from GitHub. To install
+        the package directly into the current Python environment:
       </p>
       <TerminalBlock
-        command="pip install lfhai"
-        label="pip"
+        command="pip install git+https://github.com/pranavkhaspa/lfhai.git"
+        label="GitHub"
       />
 
       <h2>Install Ollama</h2>

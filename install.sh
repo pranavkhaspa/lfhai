@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# lfhai V1 install script
-# Provisions a node with lfhai worker + Ollama
+# lfhai install script
+# Provisions a node with lfhai worker + Ollama and optionally joins the cluster.
 #
-# Usage:
-#   curl -sSL <url>/install.sh | bash
-#   or: bash install.sh [--controller-url http://controller:8001] [--port 8002]
+# Usage (single machine, single command):
+#   From the controller, first run:  lfh token create
+#   Then on each worker machine:
+#     curl -fsSL <site-url>/install.sh | bash -s -- --join-token <TOKEN>
+#
+# Or manually:
+#   bash install.sh [--controller-url http://host:8001] [--port 8002]
+#                   [--ollama-url http://localhost:11434]
+#                   [--join-token HOST:PORT:SECRET]
 #
 set -euo pipefail
 
@@ -12,6 +18,9 @@ CONTROLLER_URL="http://localhost:8001"
 WORKER_PORT=8002
 OLLAMA_URL="http://localhost:11434"
 JOIN_TOKEN="${LFHAI_JOIN_TOKEN:-}"
+LFHAI_ROOT="${LFHAI_ROOT:-$HOME/.lfhai}"
+LFHAI_BIN="$LFHAI_ROOT/venv/bin"
+REPO_URL="https://github.com/pranavkhaspa/lfhai.git"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -25,26 +34,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "============================================"
-echo "  lfhai V1 Worker Install"
+echo "  lfhai Worker Install"
 echo "============================================"
 echo ""
 echo "Controller: $CONTROLLER_URL"
 echo "Worker Port: $WORKER_PORT"
 echo "Ollama URL: $OLLAMA_URL"
-echo "Join Token: $([[ -n "$JOIN_TOKEN" ]] && echo "provided" || echo "none (requires lfh node join)")"
+JOIN_STATUS="none (requires lfh node join)"
+[[ -n "$JOIN_TOKEN" ]] && JOIN_STATUS="provided"
+echo "Join Token: $JOIN_STATUS"
+echo "Install Dir: $LFHAI_ROOT"
 echo ""
 
 # Detect OS
 OS="$(uname -s)"
-ARCH="$(uname -m)"
-
 case "$OS" in
     Linux)  PLATFORM="linux" ;;
     Darwin) PLATFORM="macos" ;;
     *)      echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 
-echo "[1/5] Checking prerequisites..."
+echo "[1/6] Checking prerequisites..."
 
 # Check Python 3.10+
 if command -v python3 &>/dev/null; then
@@ -68,7 +78,7 @@ fi
 
 # Check/install Ollama
 echo ""
-echo "[2/5] Checking Ollama..."
+echo "[2/6] Checking Ollama..."
 if command -v ollama &>/dev/null; then
     echo "  Ollama installed ✓"
 else
@@ -95,55 +105,48 @@ if [[ "$MODEL_COUNT" -eq "0" ]]; then
     ollama pull llama3.2
 fi
 
-# Install Python dependencies
+# Install lfhai
 echo ""
-echo "[3/5] Installing lfhai..."
+echo "[3/6] Installing lfhai..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "$LFHAI_ROOT"
 
 if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
-    echo "  Installing from source..."
-    cd "$SCRIPT_DIR"
+    # Running from a repository checkout: install the local source.
+    echo "  Installing from source ($SCRIPT_DIR)..."
+    python3 -m venv "$LFHAI_ROOT/venv"
+    "$LFHAI_BIN/pip" install -e "$SCRIPT_DIR"
 else
-    echo "  Installing from PyPI..."
-    SCRIPT_DIR=$(mktemp -d)
-    cd "$SCRIPT_DIR"
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install lfhai
+    # Served from the website: install the latest release from GitHub.
+    echo "  Installing from GitHub ($REPO_URL)..."
+    python3 -m venv "$LFHAI_ROOT/venv"
+    "$LFHAI_BIN/pip" install "git+$REPO_URL"
 fi
 
-if [[ ! -d ".venv" ]]; then
-    python3 -m venv .venv
-fi
-source .venv/bin/activate
-pip install -e . 2>/dev/null || pip install lfhai
+echo "  lfhai installed ✓ ($LFHAI_BIN/lfh)"
+PATH="$LFHAI_BIN:$PATH"
 
-echo "  lfhai installed ✓"
-
-# Join the cluster (required once per machine)
-echo ""
-echo "[4/6] Joining cluster..."
+# Join the cluster (required once per machine, before the worker can register)
+JOINED=0
 if [[ -n "$JOIN_TOKEN" ]]; then
-    if lfh node join "$JOIN_TOKEN" &>/dev/null; then
+    echo ""
+    echo "[4/6] Joining cluster..."
+    if "$LFHAI_BIN/lfh" node join "$JOIN_TOKEN" &>/dev/null; then
         echo "  Joined cluster ✓"
+        JOINED=1
     else
         echo "  Join failed. Retrying in 5s..."
-        until lfh node join "$JOIN_TOKEN" &>/dev/null; do sleep 5; done
+        until "$LFHAI_BIN/lfh" node join "$JOIN_TOKEN" &>/dev/null; do sleep 5; done
         echo "  Joined cluster ✓"
+        JOINED=1
     fi
-else
-    echo "  No --join-token provided."
-    echo "  Generate one on the controller: lfh token create"
-    echo "  Then join this machine with:     lfh node join <token>"
 fi
 
-# Create systemd service (optional, Linux only)
+# Create systemd service (Linux) or run the daemon in the background
 echo ""
 echo "[5/6] Setting up worker service..."
 if [[ "$PLATFORM" == "linux" ]] && command -v systemctl &>/dev/null; then
     SERVICE_FILE="/etc/systemd/system/lfhai-worker.service"
-    VENV_PATH="$(pwd)/.venv"
-    LFHAI_PATH="$(pwd)"
 
     sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
@@ -154,8 +157,8 @@ Wants=ollama.service
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$LFHAI_PATH
-ExecStart=$VENV_PATH/bin/python -m lfhai.cli worker start -c $CONTROLLER_URL -p $WORKER_PORT -o $OLLAMA_URL
+WorkingDirectory=$LFHAI_ROOT
+ExecStart=$LFHAI_BIN/lfh worker start -c $CONTROLLER_URL -p $WORKER_PORT -o $OLLAMA_URL
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
@@ -165,12 +168,21 @@ WantedBy=multi-user.target
 EOF
 
     sudo systemctl daemon-reload
-    sudo systemctl enable lfhai-worker
+    sudo systemctl enable lfhai-worker &>/dev/null
     echo "  Systemd service created ✓"
-    echo "  To start: sudo systemctl start lfhai-worker"
+    if [[ "$JOINED" -eq 1 ]] || [[ -f "$HOME/.lfhai/credentials.json" ]]; then
+        sudo systemctl start lfhai-worker
+        echo "  Worker started ✓"
+    else
+        echo "  Run: lfh node join <token>   then: sudo systemctl start lfhai-worker"
+    fi
 else
-    echo "  Systemd not available. Start manually:"
-    echo "    lfh worker start -c $CONTROLLER_URL -p $WORKER_PORT -o $OLLAMA_URL"
+    if [[ "$JOINED" -eq 1 ]]; then
+        nohup "$LFHAI_BIN/lfh" worker start -c "$CONTROLLER_URL" -p "$WORKER_PORT" -o "$OLLAMA_URL" &>/dev/null &
+        echo "  Worker started in background ✓"
+    else
+        echo "  Run: lfh node join <token>   then: lfh worker start"
+    fi
 fi
 
 # Show what models are available
@@ -188,11 +200,13 @@ echo "============================================"
 echo "  Install complete!"
 echo "============================================"
 echo ""
-echo "Start the worker:"
-echo "  lfh worker start -c $CONTROLLER_URL -p $WORKER_PORT"
-echo "Or if systemd was set up:"
-echo "  sudo systemctl start lfhai-worker"
+if [[ "$JOINED" -eq 1 ]]; then
+    echo "To add another machine, mint a fresh token and reuse this command:"
+    echo "  lfh token create"
+    echo "  curl -fsSL <site-url>/install.sh | bash -s -- --join-token <TOKEN>"
+fi
 echo ""
-echo "Test with:"
+echo "Check the cluster from any machine (controller side):"
 echo "  lfh status"
 echo "  lfh chat llama3.2 'Hello!'"
+echo ""
