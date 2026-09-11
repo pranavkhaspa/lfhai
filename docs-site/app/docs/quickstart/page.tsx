@@ -28,34 +28,55 @@ export default function QuickstartPage() {
       </p>
       <TerminalBlock command="lfh controller" label="Controller machine" />
 
-      <p>
-        The controller starts on <code>:8001</code> by default. Note the IP
-        address of this machine.
-      </p>
-
       <Callout type="info">
         The controller doesn't need a GPU. It handles routing and node
         management only.
       </Callout>
 
-      <h2>Step 3: Start a Worker</h2>
+      <h2>Step 3: Create a Join Token</h2>
       <p>
-        On each machine that will run inference (the GPU machine):
+        Still on the controller machine, mint a join token:
+      </p>
+      <TerminalBlock command="lfh token create" label="Controller machine" />
+      <p>
+        The token carries the controller address <em>and</em> a secret, so no IP
+        finding or port configuration is needed. It expires in one hour and can
+        only be used once.
+      </p>
+
+      <h2>Step 4: Join Each Machine</h2>
+      <p>
+        On each machine that will run inference, paste the command exactly as
+        printed. Replace <code>&lt;token&gt;</code> with your token:
       </p>
       <TerminalBlock
-        command="lfh worker start -c http://<controller-ip>:8001"
-        label="GPU machine"
+        command="lfh node join <token>"
+        label="Every worker machine"
       />
+
+      <p>
+        The machine is now admitted to the cluster and its credential is saved
+        locally (<code>~/.lfhai/credentials.json</code>). It is the only step
+        that requires the token &mdash; the worker daemon reuses the saved
+        credential from now on.
+      </p>
+
+      <h2>Step 5: Start a Worker</h2>
+      <p>
+        On each machine that just joined, start the worker:
+      </p>
+      <TerminalBlock command="lfh worker start" label="GPU machine" />
 
       <p>The worker will:</p>
       <ul>
+        <li>Load the saved node identity and credential</li>
         <li>Detect your hardware (GPU, CPU, RAM)</li>
         <li>Query Ollama for available models</li>
         <li>Register with the controller</li>
         <li>Start sending heartbeats every 3 seconds</li>
       </ul>
 
-      <h2>Step 4: Check Cluster Status</h2>
+      <h2>Step 6: Check Cluster Status</h2>
       <TerminalBlock
         command="lfh status"
         label="Any machine"
@@ -72,7 +93,7 @@ Nodes (1):
         language="text"
       />
 
-      <h2>Step 5: Send Your First Request</h2>
+      <h2>Step 7: Send Your First Request</h2>
       <TerminalBlock
         command='lfh chat llama3.2 "What is the capital of France?"'
         label="Any machine"
@@ -109,17 +130,18 @@ curl -X POST http://<controller-ip>:8000/v1/chat/completions \\
 
       <h2>Adding More Nodes</h2>
       <p>
-        To add another worker (e.g., a CPU-only machine), just run the worker
-        command on it:
+        To add another worker (e.g., a CPU-only machine), mint a fresh token on
+        the controller, run <code>lfh node join &lt;token&gt;</code> on the new
+        machine, then start its worker:
       </p>
-      <TerminalBlock
-        command="lfh worker start -c http://<controller-ip>:8001"
-        label="Additional machine"
-      />
+      <TerminalBlock command="lfh token create" label="Controller machine" />
+      <TerminalBlock command="lfh node join <token>" label="New machine" />
+      <TerminalBlock command="lfh worker start" label="New machine" />
 
       <p>
-        The controller will automatically detect the new node and start routing
-        tasks to it.
+        The controller automatically detects the new node and starts routing
+        tasks to it. Each join token is single-use, so every machine needs its
+        own.
       </p>
 
       <h2>What's Next?</h2>

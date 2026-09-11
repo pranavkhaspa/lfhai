@@ -105,3 +105,15 @@ class SubmitTaskRequest(BaseModel):
     stream: bool = False
     temperature: float = 0.7
     max_tokens: int = 2048
+
+
+class JoinRequest(BaseModel):
+    """Worker asks to join the cluster with a controller-issued token."""
+    token: str
+    node: NodeInfo = Field(default_factory=NodeInfo)
+
+
+class JoinResponse(BaseModel):
+    status: str = "ok"
+    node_id: str = ""
+    node_secret: str = ""

@@ -27,6 +27,37 @@ export default function InstallPage() {
         <li>Create a systemd service (Linux only)</li>
       </ul>
 
+      <h2>Join the Cluster</h2>
+      <p>
+        A machine&apos;s <em>first</em> step on the cluster is to be admitted
+        with a one-time join token. No IP addresses to find, no ports to
+        configure &mdash; the token carries everything.
+      </p>
+      <p>
+        On the controller machine, mint a token (steps below), then run
+        <code>lfh node join</code> on each worker:
+      </p>
+      <TerminalBlock
+        command="lfh token create"
+        label="Controller machine"
+      />
+      <TerminalBlock
+        command="lfh node join <token>"
+        label="Each worker machine"
+      />
+
+      <p>
+        Tokens expire after one hour, are single-use, and are stored
+        hash-only on the controller. The worker saves its credential to{" "}
+        <code>~/.lfhai/credentials.json</code> (mode 0600) and uses it for all
+        future registrations and heartbeats.
+      </p>
+
+      <Callout type="info">
+        List or revoke tokens from the controller machine with{" "}
+        <code>lfh token list</code> and <code>lfh token revoke</code>.
+      </Callout>
+
       <h2>Install from Source</h2>
       <p>
         Clone the repository and install in development mode:

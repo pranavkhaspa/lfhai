@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import secrets
 import time
 
 import aiosqlite
@@ -16,6 +19,17 @@ from lfhai.models import (
 )
 
 HEARTBEAT_TIMEOUT = 10.0  # seconds before node is considered offline
+TOKEN_TTL_DEFAULT_SECONDS = 3600.0  # join tokens expire after 1 hour
+
+
+def _hash_secret(secret: str) -> str:
+    """SHA-256 hash of a join token or node secret (never store plaintext)."""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _secrets_equal(a: str, b: str) -> bool:
+    """Constant-time comparison of secret hashes."""
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 class NodeRegistry:
@@ -44,8 +58,19 @@ class NodeRegistry:
                 cuda_version TEXT DEFAULT '',
                 has_gpu INTEGER DEFAULT 0,
                 capabilities TEXT DEFAULT '[]',
+                node_secret_hash TEXT DEFAULT '',
                 registered_at REAL NOT NULL,
                 last_heartbeat REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS join_tokens (
+                token_id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                used_at REAL,
+                node_id TEXT DEFAULT '',
+                node_hostname TEXT DEFAULT '',
+                created_at REAL NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS tasks (
@@ -61,6 +86,12 @@ class NodeRegistry:
                 completed_at REAL DEFAULT 0
             );
         """)
+        # Migration for databases created before node secrets existed
+        cols = await self._db.execute("PRAGMA table_info(nodes)")
+        if "node_secret_hash" not in {row["name"] for row in await cols.fetchall()}:
+            await self._db.execute(
+                "ALTER TABLE nodes ADD COLUMN node_secret_hash TEXT DEFAULT ''"
+            )
         await self._db.commit()
 
     async def close(self) -> None:
@@ -101,6 +132,92 @@ class NodeRegistry:
         )
         await self._db.commit()
         return node
+
+    async def create_join_token(
+        self, ttl_seconds: float = TOKEN_TTL_DEFAULT_SECONDS
+    ) -> tuple[str, str, float]:
+        """Mint a join token.
+
+        Returns (token_id, raw_secret, expires_at). Only the token_id and a
+        hash of the raw secret are kept in the database.
+        """
+        token_id = secrets.token_urlsafe(6)
+        raw_secret = secrets.token_urlsafe(24)
+        expires_at = time.time() + ttl_seconds
+        await self._db.execute(
+            """INSERT INTO join_tokens (token_id, token_hash, expires_at, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (token_id, _hash_secret(raw_secret), expires_at, time.time()),
+        )
+        await self._db.commit()
+        return token_id, raw_secret, expires_at
+
+    async def consume_join_token(self, raw_secret: str) -> str | None:
+        """Validate and single-use-consume a join token.
+
+        Returns the token_id on success, or None if the token is missing,
+        already used, or expired.
+        """
+        cursor = await self._db.execute(
+            "SELECT token_id, token_hash, expires_at, used_at FROM join_tokens "
+            "WHERE token_hash = ?",
+            (_hash_secret(raw_secret),),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        if row["used_at"] is not None:
+            return None
+        if time.time() > row["expires_at"]:
+            return None
+        await self._db.execute(
+            "UPDATE join_tokens SET used_at = ? WHERE token_hash = ?",
+            (time.time(), _hash_secret(raw_secret)),
+        )
+        await self._db.commit()
+        return row["token_id"]
+
+    async def list_join_tokens(self) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT token_id, expires_at, used_at, node_id, node_hostname, created_at "
+            "FROM join_tokens ORDER BY created_at"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def revoke_join_token(self, token_id: str) -> bool:
+        """Permanently disable a token by deleting it."""
+        cursor = await self._db.execute(
+            "DELETE FROM join_tokens WHERE token_id = ?", (token_id,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def mark_join_token_used(self, token_id: str, node_id: str, hostname: str) -> None:
+        """Record which node joined with a token (for audit visibility)."""
+        await self._db.execute(
+            "UPDATE join_tokens SET node_id = ?, node_hostname = ? WHERE token_id = ?",
+            (node_id, hostname, token_id),
+        )
+        await self._db.commit()
+
+    async def set_node_secret(self, node_id: str, node_secret: str) -> None:
+        """Store the (hashed) per-node credential after a successful join."""
+        await self._db.execute(
+            "UPDATE nodes SET node_secret_hash = ? WHERE node_id = ?",
+            (_hash_secret(node_secret), node_id),
+        )
+        await self._db.commit()
+
+    async def verify_node(self, node_id: str, node_secret: str) -> bool:
+        """Return True if node_secret matches the node's stored credential."""
+        cursor = await self._db.execute(
+            "SELECT node_secret_hash FROM nodes WHERE node_id = ?", (node_id,)
+        )
+        row = await cursor.fetchone()
+        if not row or not row["node_secret_hash"]:
+            return False
+        return _secrets_equal(row["node_secret_hash"], _hash_secret(node_secret))
 
     async def heartbeat(self, hb: Heartbeat) -> bool:
         """Update heartbeat for a node. Returns False if node not found."""

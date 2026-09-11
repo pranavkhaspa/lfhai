@@ -11,6 +11,7 @@ set -euo pipefail
 CONTROLLER_URL="http://localhost:8001"
 WORKER_PORT=8002
 OLLAMA_URL="http://localhost:11434"
+JOIN_TOKEN="${LFHAI_JOIN_TOKEN:-}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -18,6 +19,7 @@ while [[ $# -gt 0 ]]; do
         --controller-url) CONTROLLER_URL="$2"; shift 2 ;;
         --port) WORKER_PORT="$2"; shift 2 ;;
         --ollama-url) OLLAMA_URL="$2"; shift 2 ;;
+        --join-token) JOIN_TOKEN="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -29,6 +31,7 @@ echo ""
 echo "Controller: $CONTROLLER_URL"
 echo "Worker Port: $WORKER_PORT"
 echo "Ollama URL: $OLLAMA_URL"
+echo "Join Token: $([[ -n "$JOIN_TOKEN" ]] && echo "provided" || echo "none (requires lfh node join)")"
 echo ""
 
 # Detect OS
@@ -117,9 +120,26 @@ pip install -e . 2>/dev/null || pip install lfhai
 
 echo "  lfhai installed ✓"
 
+# Join the cluster (required once per machine)
+echo ""
+echo "[4/6] Joining cluster..."
+if [[ -n "$JOIN_TOKEN" ]]; then
+    if lfh node join "$JOIN_TOKEN" &>/dev/null; then
+        echo "  Joined cluster ✓"
+    else
+        echo "  Join failed. Retrying in 5s..."
+        until lfh node join "$JOIN_TOKEN" &>/dev/null; do sleep 5; done
+        echo "  Joined cluster ✓"
+    fi
+else
+    echo "  No --join-token provided."
+    echo "  Generate one on the controller: lfh token create"
+    echo "  Then join this machine with:     lfh node join <token>"
+fi
+
 # Create systemd service (optional, Linux only)
 echo ""
-echo "[4/5] Setting up worker service..."
+echo "[5/6] Setting up worker service..."
 if [[ "$PLATFORM" == "linux" ]] && command -v systemctl &>/dev/null; then
     SERVICE_FILE="/etc/systemd/system/lfhai-worker.service"
     VENV_PATH="$(pwd)/.venv"
@@ -155,7 +175,7 @@ fi
 
 # Show what models are available
 echo ""
-echo "[5/5] Available models:"
+echo "[6/6] Available models:"
 curl -s "$OLLAMA_URL/api/tags" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -170,7 +190,6 @@ echo "============================================"
 echo ""
 echo "Start the worker:"
 echo "  lfh worker start -c $CONTROLLER_URL -p $WORKER_PORT"
-echo ""
 echo "Or if systemd was set up:"
 echo "  sudo systemctl start lfhai-worker"
 echo ""

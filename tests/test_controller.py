@@ -3,6 +3,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import lfhai.controller as controller_module
 from lfhai.controller import app, init_controller, shutdown_controller
 
 
@@ -21,6 +22,34 @@ async def client():
         yield c
 
 
+async def join_node(client, hostname="test-host", models=("llama3",), has_gpu=True):
+    """Admit a node via the join-token flow and return its credentials."""
+    token_id, token_secret, _ = await controller_module.registry.create_join_token()
+    node = {
+        "hostname": hostname,
+        "resources": {"ip": "192.168.1.10", "cores": 4},
+        "capabilities": {"models": list(models), "has_gpu": has_gpu},
+    }
+    resp = await client.post("/api/v1/nodes/join", json={"token": token_secret, "node": node})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def register_node(client, creds, **overrides):
+    node = {
+        "node_id": creds["node_id"],
+        "hostname": "test-host",
+        "resources": {"ip": "192.168.1.10", "cores": 4},
+        "capabilities": {"models": ["llama3"], "has_gpu": True},
+    }
+    node.update(overrides)
+    return await client.post(
+        "/api/v1/nodes/register",
+        json=node,
+        headers={"Authorization": f"Bearer {creds['node_secret']}"},
+    )
+
+
 @pytest.mark.asyncio
 async def test_health(client):
     resp = await client.get("/health")
@@ -29,33 +58,82 @@ async def test_health(client):
 
 
 @pytest.mark.asyncio
-async def test_register_and_list_nodes(client):
-    node = {
-        "node_id": "test-node-1",
-        "hostname": "test-host",
-        "resources": {"ip": "192.168.1.10", "cores": 4},
-        "capabilities": {"models": ["llama3"], "has_gpu": True},
-    }
-    resp = await client.post("/api/v1/nodes/register", json=node)
+async def test_join_then_register_and_list_nodes(client):
+    creds = await join_node(client)
+    assert creds["node_id"].startswith("worker-")
+
+    resp = await register_node(client, creds)
     assert resp.status_code == 200
-    assert resp.json()["node_id"] == "test-node-1"
+    assert resp.json()["node_id"] == creds["node_id"]
 
     resp = await client.get("/api/v1/nodes")
     assert resp.status_code == 200
     nodes = resp.json()
-    assert len(nodes) >= 1
+    assert any(n["node_id"] == creds["node_id"] for n in nodes)
+
+
+@pytest.mark.asyncio
+async def test_join_with_invalid_token(client):
+    resp = await client.post(
+        "/api/v1/nodes/join",
+        json={"token": "not-a-real-token", "node": {"hostname": "evil-host"}},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_join_token_is_single_use(client):
+    token_id, token_secret, _ = await controller_module.registry.create_join_token()
+    node = {"hostname": "node-a"}
+    resp = await client.post("/api/v1/nodes/join", json={"token": token_secret, "node": node})
+    assert resp.status_code == 200
+
+    resp = await client.post("/api/v1/nodes/join", json={"token": token_secret, "node": node})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_join_with_expired_token(client):
+    import time
+
+    _, token_secret, _ = await controller_module.registry.create_join_token(
+        ttl_seconds=0.001
+    )
+    time.sleep(0.01)
+    resp = await client.post(
+        "/api/v1/nodes/join",
+        json={"token": token_secret, "node": {"hostname": "late-host"}},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_register_requires_credentials(client):
+    node = {
+        "node_id": "worker-ghost",
+        "hostname": "ghost",
+        "resources": {"ip": "192.168.1.99", "cores": 1},
+        "capabilities": {"models": [], "has_gpu": False},
+    }
+    resp = await client.post("/api/v1/nodes/register", json=node)
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_register_with_wrong_secret(client):
+    creds = await join_node(client)
+    resp = await client.post(
+        "/api/v1/nodes/register",
+        json={"node_id": creds["node_id"], "hostname": "test-host"},
+        headers={"Authorization": "Bearer wrong-secret"},
+    )
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_get_node(client):
-    node = {
-        "node_id": "test-node-2",
-        "hostname": "test-host-2",
-        "resources": {"ip": "192.168.1.11", "cores": 8},
-        "capabilities": {"models": ["whisper"], "has_gpu": False},
-    }
-    await client.post("/api/v1/nodes/register", json=node)
-    resp = await client.get("/api/v1/nodes/test-node-2")
+    creds = await join_node(client, hostname="test-host-2")
+    resp = await client.get(f"/api/v1/nodes/{creds['node_id']}")
     assert resp.status_code == 200
     assert resp.json()["hostname"] == "test-host-2"
 
@@ -68,35 +146,23 @@ async def test_get_node_not_found(client):
 
 @pytest.mark.asyncio
 async def test_remove_node(client):
-    node = {
-        "node_id": "test-node-3",
-        "hostname": "test-host-3",
-        "resources": {"ip": "192.168.1.12", "cores": 2},
-        "capabilities": {"models": [], "has_gpu": False},
-    }
-    await client.post("/api/v1/nodes/register", json=node)
-    resp = await client.delete("/api/v1/nodes/test-node-3")
+    creds = await join_node(client)
+    resp = await client.delete(f"/api/v1/nodes/{creds['node_id']}")
     assert resp.status_code == 200
 
-    resp = await client.get("/api/v1/nodes/test-node-3")
+    resp = await client.get(f"/api/v1/nodes/{creds['node_id']}")
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_heartbeat(client):
-    node = {
-        "node_id": "test-hb-node",
-        "hostname": "hb-host",
-        "resources": {"ip": "10.0.0.5", "cores": 2},
-        "capabilities": {"models": [], "has_gpu": False},
-    }
-    await client.post("/api/v1/nodes/register", json=node)
-
-    hb = {
-        "node_id": "test-hb-node",
-        "metrics": {"cpu_usage_pct": 45.0},
-    }
-    resp = await client.post("/api/v1/nodes/heartbeat", json=hb)
+    creds = await join_node(client)
+    hb = {"node_id": creds["node_id"], "metrics": {"cpu_usage_pct": 45.0}}
+    resp = await client.post(
+        "/api/v1/nodes/heartbeat",
+        json=hb,
+        headers={"Authorization": f"Bearer {creds['node_secret']}"},
+    )
     assert resp.status_code == 200
 
 
@@ -108,15 +174,21 @@ async def test_heartbeat_unknown_node(client):
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_with_wrong_secret(client):
+    creds = await join_node(client)
+    hb = {"node_id": creds["node_id"], "metrics": {"cpu_usage_pct": 10.0}}
+    resp = await client.post(
+        "/api/v1/nodes/heartbeat",
+        json=hb,
+        headers={"Authorization": "Bearer nope"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_list_models(client):
-    # Register a node with models
-    node = {
-        "node_id": "model-node",
-        "hostname": "model-host",
-        "resources": {"ip": "10.0.0.6", "cores": 4},
-        "capabilities": {"models": ["llama3", "whisper"], "has_gpu": True},
-    }
-    await client.post("/api/v1/nodes/register", json=node)
+    creds = await join_node(client, models=["llama3", "whisper"])
+    assert creds
     resp = await client.get("/v1/models")
     assert resp.status_code == 200
     data = resp.json()

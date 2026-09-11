@@ -2,7 +2,7 @@
 
 lfhai is a distributed, local-first compute fabric and runtime designed to coordinate mismatched, resource-constrained consumer hardware into a unified AI system. Rather than relying on uniform cluster topologies (like homogeneous GPU nodes), lfhai abstracts heterogeneous hardware—such as standard consumer GPUs, older CPUs, mobile devices, and shared local servers—into a single execution layer.
 
-**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, and CLI are working. 25 tests passing.
+**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, and CLI are working. 39 tests passing.
 
 ---
 
@@ -10,15 +10,18 @@ lfhai is a distributed, local-first compute fabric and runtime designed to coord
 
 ```bash
 # Install
-git clone https://github.com/your-org/lfhai.git
+git clone https://github.com/pranavkhaspa/lfhai.git
 cd lfhai
 pip install -e .
 
 # Start the controller
 lfh controller
 
-# On a GPU machine with Ollama running, start a worker
-lfh worker start -c http://<controller-ip>:8001
+# Mint a one-time join token (prints an lfh node join <token> command)
+lfh token create
+
+# On each worker machine, run the printed command to join, then:
+lfh worker start
 
 # Submit a chat request
 lfh chat llama3 "What is the capital of France?"
@@ -39,7 +42,7 @@ lfh status
 | **CLI** | Working | `lfh` command: status, chat, nodes, models, worker start |
 | **Router** | Working | GPU-preferring, capability-aware node selection |
 | **Tailcat** | Ready | Encrypted tunnel wrapper (needs tailcat binary installed) |
-| **Tests** | 25 passing | Models, registry, router, controller API |
+| **Tests** | 39 passing | Models, registry, router, controller API, join-token auth |
 | **install.sh** | Ready | Worker provisioning script (Ollama + lfhai + systemd) |
 
 ### What V1 Does NOT Include (Future)
@@ -98,6 +101,33 @@ lfh gateway                   # Start the gateway
 
 ---
 
+## Cluster Authentication
+
+lfhai uses one-time **join tokens** to admit machines; no accounts or
+sign-ups required (perfect for private clusters on your own hardware).
+
+1. On the controller machine: `lfh token create` — prints a single
+   `lfh node join HOST:PORT:SECRET` command.
+2. On each worker machine: run that exact command once.
+
+What that gives you:
+
+- **No IP hunting or port config** — the token carries the controller
+  address and secret, so onboarding is one paste per machine.
+- **Single-use tokens** — each token admits one machine, then dies.
+- **Expiry** — tokens default to a 1-hour lifetime (`--ttl-hours` on `lfh token create`).
+- **Hashed at rest** — the controller stores only SHA-256 hashes of tokens
+  and node secrets, never plaintext.
+- **Server-assigned identities** — the controller generates each node's ID,
+  and the worker stores its credential in `~/.lfhai/credentials.json` (0600).
+- **Authenticated nodes** — worker registration and heartbeats require the
+  node secret; `lfh token list` / `lfh token revoke` manage tokens.
+
+Out of scope for V1: TLS between nodes and authenticated worker endpoints
+are planned for V2 networking.
+
+---
+
 ## API Endpoints
 
 ### Gateway (port 8000)
@@ -111,8 +141,9 @@ lfh gateway                   # Start the gateway
 ### Controller (port 8001)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/nodes/register` | Register a worker node |
-| POST | `/api/v1/nodes/heartbeat` | Send heartbeat telemetry |
+| POST | `/api/v1/nodes/join` | Admit a node with a one-time join token |
+| POST | `/api/v1/nodes/register` | Register a worker node (Bearer node secret required) |
+| POST | `/api/v1/nodes/heartbeat` | Send heartbeat telemetry (Bearer node secret required) |
 | GET | `/api/v1/nodes` | List all nodes |
 | GET | `/api/v1/nodes/{id}` | Get node details |
 | DELETE | `/api/v1/nodes/{id}` | Remove a node |

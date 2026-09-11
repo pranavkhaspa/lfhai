@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from lfhai.models import (
     Heartbeat,
+    JoinRequest,
+    JoinResponse,
     NodeInfo,
     SubmitTaskRequest,
 )
@@ -25,6 +28,18 @@ logger = logging.getLogger("lfhai.controller")
 registry: NodeRegistry | None = None
 task_store: TaskStore | None = None
 router: TaskRouter | None = None
+controller_db_path: str = "lfhai.db"
+JOIN_GUIDANCE = "Run: lfh node join <token> (get a token with: lfh token create)"
+
+
+def _bearer_secret(authorization: str | None) -> str | None:
+    """Extract the raw secret from an Authorization: Bearer header."""
+    if not authorization:
+        return None
+    scheme, _, rest = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not rest:
+        return None
+    return rest.strip()
 
 
 async def heartbeat_checker():
@@ -58,7 +73,7 @@ async def shutdown_controller():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_controller()
+    await init_controller(controller_db_path)
     yield
     await shutdown_controller()
 
@@ -68,15 +83,53 @@ app = FastAPI(title="lfhai Controller", version="0.1.0", lifespan=lifespan)
 
 # --- Node Management ---
 
+@app.post("/api/v1/nodes/join")
+async def join_cluster(req: JoinRequest) -> JoinResponse:
+    """Admit a new node using a controller-issued join token.
+
+    Validates the one-time token, assigns a server-side node ID, and hands
+    back a per-node secret used to authenticate register/heartbeat calls.
+    """
+    token_id = await registry.consume_join_token(req.token)
+    if not token_id:
+        raise HTTPException(
+            status_code=401, detail=f"Invalid, expired, or used join token. {JOIN_GUIDANCE}"
+        )
+
+    node_id = f"worker-{req.node.hostname or 'node'}-{secrets.token_urlsafe(4)}"
+    node = req.node.model_copy(update={"node_id": node_id})
+    registered = await registry.register(node)
+
+    node_secret = secrets.token_urlsafe(24)
+    await registry.set_node_secret(registered.node_id, node_secret)
+    await registry.mark_join_token_used(token_id, registered.node_id, registered.hostname)
+
+    logger.info("Node joined cluster: %s (%s)", registered.hostname, registered.node_id)
+    return JoinResponse(node_id=registered.node_id, node_secret=node_secret)
+
+
 @app.post("/api/v1/nodes/register")
-async def register_node(node: NodeInfo) -> dict:
+async def register_node(
+    node: NodeInfo, authorization: str | None = Header(default=None)
+) -> dict:
+    secret = _bearer_secret(authorization)
+    if not await registry.verify_node(node.node_id, secret or ""):
+        raise HTTPException(status_code=401, detail=f"Not authorized. {JOIN_GUIDANCE}")
     registered = await registry.register(node)
     logger.info("Node registered: %s (%s)", registered.hostname, registered.node_id)
     return {"status": "ok", "node_id": registered.node_id}
 
 
 @app.post("/api/v1/nodes/heartbeat")
-async def node_heartbeat(hb: Heartbeat) -> dict:
+async def node_heartbeat(
+    hb: Heartbeat, authorization: str | None = Header(default=None)
+) -> dict:
+    existing = await registry.get_node(hb.node_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Node not registered")
+    secret = _bearer_secret(authorization)
+    if not await registry.verify_node(hb.node_id, secret or ""):
+        raise HTTPException(status_code=401, detail=f"Not authorized. {JOIN_GUIDANCE}")
     ok = await registry.heartbeat(hb)
     if not ok:
         raise HTTPException(status_code=404, detail="Node not registered")
@@ -212,7 +265,9 @@ async def get_task(task_id: str) -> dict:
     return task
 
 
-def run_controller(host: str = "0.0.0.0", port: int = 8001):
+def run_controller(host: str = "0.0.0.0", port: int = 8001, db_path: str = "lfhai.db"):
+    global controller_db_path
+    controller_db_path = db_path
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
     logger.info("Starting controller on %s:%d", host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")

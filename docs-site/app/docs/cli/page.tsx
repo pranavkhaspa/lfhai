@@ -54,6 +54,47 @@ Nodes (2):
         filename="output"
       />
 
+      <h3>lfh node join</h3>
+      <p>Admit this machine to the cluster with a one-time join token.</p>
+      <CodeBlock
+        code={`lfh node join [OPTIONS] TOKEN
+
+Arguments:
+  TOKEN    A token from: lfh token create (format HOST:PORT:SECRET)
+
+Options:
+  --credentials, -cr PATH  Credential file (default: ~/.lfhai/credentials.json)
+  --ollama-url, -o URL     Ollama URL (default: http://localhost:11434)`}
+        language="text"
+      />
+
+      <h3>lfh token</h3>
+      <p>Manage cluster join tokens. Run on the controller machine.</p>
+      <CodeBlock
+        code={`lfh token [OPTIONS] COMMAND
+
+Options:
+  --db PATH   Controller database file (default: lfhai.db)
+
+Commands:
+  create  Mint a join token (--ttl-hours, --host)
+  list    Show tokens and whether each is used/expired/active
+  revoke  Delete a token by ID`}
+        language="text"
+      />
+      <p>Examples:</p>
+      <TerminalBlock command="lfh token create" label="Mint a token" />
+      <TerminalBlock
+        command="lfh node join 192.168.1.5:8001:s3cret-here"
+        label="Admit one machine"
+      />
+
+      <Callout type="info">
+        Tokens are single-use, expire after one hour by default, and are stored
+        hashed on the controller. A machine only joins if someone runs{" "}
+        <code>lfh node join</code> with a valid token.
+      </Callout>
+
       <h3>lfh chat</h3>
       <p>Submit a chat request to the cluster.</p>
       <CodeBlock

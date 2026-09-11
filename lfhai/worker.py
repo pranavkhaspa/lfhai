@@ -28,6 +28,7 @@ app = FastAPI(title="lfhai Worker", version="0.1.0")
 # Config - set at startup
 controller_url: str = "http://localhost:8001"
 node_id: str = ""
+node_secret: str = ""
 heartbeat_interval: float = 3.0
 ollama_url: str = "http://localhost:11434"
 ollama_client: OllamaClient | None = None
@@ -111,10 +112,20 @@ async def register_with_controller(node_info: NodeInfo) -> bool:
             resp = await client.post(
                 f"{controller_url}/api/v1/nodes/register",
                 json=node_info.model_dump(),
+                headers={"Authorization": f"Bearer {node_secret}"},
             )
             resp.raise_for_status()
             logger.info("Registered with controller as %s", node_info.node_id)
             return True
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            logger.warning(
+                "Not authorized by controller. Run: lfh node join <token> using a "
+                "token from: lfh token create"
+            )
+        else:
+            logger.warning("Failed to register with controller: %s", e)
+        return False
     except Exception as e:
         logger.warning("Failed to register with controller: %s", e)
         return False
@@ -150,7 +161,11 @@ async def send_heartbeat(node_id: str, resources: NodeResources):
     hb = Heartbeat(node_id=node_id, metrics=metrics)
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(f"{controller_url}/api/v1/nodes/heartbeat", json=hb.model_dump())
+            await client.post(
+                f"{controller_url}/api/v1/nodes/heartbeat",
+                json=hb.model_dump(),
+                headers={"Authorization": f"Bearer {node_secret}"},
+            )
     except Exception as e:
         logger.warning("Heartbeat failed: %s", e)
 
@@ -227,8 +242,9 @@ def run_worker(
     ctrl_url: str = "http://localhost:8001",
     worker_port: int = 8002,
     ollama: str = "http://localhost:11434",
+    credentials: str | None = None,
 ):
-    global controller_url, node_id, ollama_client, ollama_url
+    global controller_url, node_id, node_secret, ollama_client, ollama_url
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
@@ -236,12 +252,27 @@ def run_worker(
     ollama_url = ollama
     ollama_client = OllamaClient(base_url=ollama)
 
+    # Load node credentials from a prior `lfh node join`.
+    from pathlib import Path
+
+    from lfhai.credentials import load_credentials
+
+    creds_path = Path(credentials) if credentials else None
+    creds = load_credentials(creds_path)
+    if creds:
+        node_id = creds["node_id"]
+        node_secret = creds["node_secret"]
+        logger.info("Using node identity: %s", node_id)
+    else:
+        node_id = ""
+        node_secret = ""
+        logger.warning(
+            "No credentials found. Run: lfh node join <token> (token from: lfh token create)"
+        )
+
     # Detect hardware
     resources = _get_system_resources()
     models = asyncio.get_event_loop().run_until_complete(detect_models())
-
-    node_id_val = f"worker-{resources.hostname}-{worker_port}"
-    node_id = node_id_val
 
     capabilities = NodeCapabilities(
         models=models,
