@@ -21,7 +21,7 @@ OLLAMA_URL="http://localhost:11434"
 JOIN_TOKEN="${LFHAI_JOIN_TOKEN:-}"
 LFHAI_ROOT="${LFHAI_ROOT:-$HOME/.lfhai}"
 LFHAI_BIN="$LFHAI_ROOT/venv/bin"
-LFHAI_WHEEL_URL="${LFHAI_WHEEL_URL:-https://lfhai.vercel.app/lfhai-0.1.0-py3-none-any.whl}"
+LFHAI_WHEEL_URL="${LFHAI_WHEEL_URL:-https://lfhai.vercel.app/lfhai-0.1.1-py3-none-any.whl}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do

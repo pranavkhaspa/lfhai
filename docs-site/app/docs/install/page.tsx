@@ -85,12 +85,12 @@ pip install -e ".[dev]"`}
       <h2>Install the Package</h2>
       <p>
         The one-line installer pulls the packaged wheel from this site
-        (<code>/lfhai-0.1.0-py3-none-any.whl</code>) so no repo access or
+        (<code>/lfhai-0.1.1-py3-none-any.whl</code>) so no repo access or
         credentials are needed. To install the package directly into the
         current Python environment:
       </p>
       <TerminalBlock
-        command={`pip install https://lfhai.vercel.app/lfhai-0.1.0-py3-none-any.whl`}
+        command={`pip install https://lfhai.vercel.app/lfhai-0.1.1-py3-none-any.whl`}
         label="pip"
       />
 

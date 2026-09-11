@@ -311,7 +311,7 @@ def token_create(ctx, ttl_hours, advertise_host):
         finally:
             await reg.close()
 
-    token_id, raw_secret = _asyncio.get_event_loop().run_until_complete(_create())
+    token_id, raw_secret = _asyncio.run(_create())
 
     host = advertise_host or _detect_advertised_host()
     click.echo(f"Join token {click.style(token_id, bold=True)} created "
@@ -339,7 +339,7 @@ def token_list(ctx):
         finally:
             await reg.close()
 
-    tokens = _asyncio.get_event_loop().run_until_complete(_list())
+    tokens = _asyncio.run(_list())
     if not tokens:
         click.echo("No join tokens. Create one with: lfh token create")
         return
@@ -374,7 +374,7 @@ def token_revoke(ctx, token_id):
         finally:
             await reg.close()
 
-    ok = _asyncio.get_event_loop().run_until_complete(_revoke())
+    ok = _asyncio.run(_revoke())
     if ok:
         click.echo(f"Revoked token {token_id}")
     else:

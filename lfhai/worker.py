@@ -270,32 +270,32 @@ def run_worker(
             "No credentials found. Run: lfh node join <token> (token from: lfh token create)"
         )
 
-    # Detect hardware
-    resources = _get_system_resources()
-    models = asyncio.get_event_loop().run_until_complete(detect_models())
+    async def _amain() -> None:
+        # Detect hardware
+        resources = _get_system_resources()
+        models = await detect_models()
 
-    capabilities = NodeCapabilities(
-        models=models,
-        has_gpu=resources.gpu is not None,
-        has_cuda=resources.gpu is not None and bool(resources.gpu.cuda_version),
-    )
+        capabilities = NodeCapabilities(
+            models=models,
+            has_gpu=resources.gpu is not None,
+            has_cuda=resources.gpu is not None and bool(resources.gpu.cuda_version),
+        )
 
-    node_info = NodeInfo(
-        node_id=node_id,
-        hostname=resources.hostname,
-        resources=resources,
-        capabilities=capabilities,
-    )
+        node_info = NodeInfo(
+            node_id=node_id,
+            hostname=resources.hostname,
+            resources=resources,
+            capabilities=capabilities,
+        )
 
-    logger.info("Worker starting on %s:%d", resources.ip, worker_port)
-    logger.info("Hardware: %d cores, %d GB RAM, GPU: %s",
-                resources.cores,
-                resources.memory_total_bytes // (1024**3),
-                resources.gpu.model if resources.gpu else "none")
-    logger.info("Models: %s", models)
+        logger.info("Worker starting on %s:%d", resources.ip, worker_port)
+        logger.info("Hardware: %d cores, %d GB RAM, GPU: %s",
+                    resources.cores,
+                    resources.memory_total_bytes // (1024**3),
+                    resources.gpu.model if resources.gpu else "none")
+        logger.info("Models: %s", models)
 
-    # Register with controller (retry loop)
-    async def register_loop():
+        # Register with controller (retry loop)
         while True:
             ok = await register_with_controller(node_info)
             if ok:
@@ -303,10 +303,13 @@ def run_worker(
             logger.info("Retrying registration in 5s...")
             await asyncio.sleep(5)
 
-    asyncio.get_event_loop().run_until_complete(register_loop())
+        # Start heartbeat in background, then serve requests on the same loop
+        heartbeat_task = asyncio.create_task(heartbeat_loop(node_id, resources))
+        try:
+            config = uvicorn.Config(app, host="0.0.0.0", port=worker_port, log_level="info")
+            server = uvicorn.Server(config)
+            await server.serve()
+        finally:
+            heartbeat_task.cancel()
 
-    # Start heartbeat in background
-    asyncio.get_event_loop().create_task(heartbeat_loop(node_id, resources))
-
-    # Start HTTP server
-    uvicorn.run(app, host="0.0.0.0", port=worker_port, log_level="info")
+    asyncio.run(_amain())
