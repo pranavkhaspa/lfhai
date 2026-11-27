@@ -12,7 +12,7 @@ android {
         minSdk 24
         targetSdk 34
         versionCode (project.findProperty('lfhaiVersionCode') as Integer ?: 1)
-        versionName (project.findProperty('lfhaiVersion') ?: '0.1.5')
+        versionName (project.findProperty('lfhaiVersion') ?: '0.1.6')
 
         externalNativeBuild {
             cmake {

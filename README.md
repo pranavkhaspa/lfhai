@@ -296,6 +296,7 @@ Pushing a `v*` tag publishes GitHub Release artifacts via
 - `lfhai-<version>.apk` — Android debug APK for contributor devices
 - `lfhai-linux-x86_64-<version>.tar.gz` — portable Linux CLI + `llama-server` + `ggml-rpc-server`
 - `lfhai-windows-x86_64-<version>.zip` — portable Windows CLI + `llama-server.exe` + `ggml-rpc-server.exe`
+- `lfhai-<version>-py3-none-any.whl` — Python wheel used by `install.sh`
 
 The runtime is pure Python and also works on Linux, macOS, and Windows with Ollama.
 For portable bundles, set environment variables and run the bundled launcher:

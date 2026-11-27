@@ -32,11 +32,12 @@ RPC_GPU_PORT=50052
 FIT_TARGET_MIB=0
 MODEL_DIR=""
 LLAMACPP_BIN="llama-server"
-RPC_BIN="rpc-server"
+RPC_BIN="ggml-rpc-server"
 JOIN_TOKEN="${LFHAI_JOIN_TOKEN:-}"
 LFHAI_ROOT="${LFHAI_ROOT:-$HOME/.lfhai}"
 LFHAI_BIN="$LFHAI_ROOT/venv/bin"
-LFHAI_WHEEL_URL="${LFHAI_WHEEL_URL:-https://lfhai.vercel.app/lfhai-0.1.5-py3-none-any.whl}"
+LFHAI_VERSION="${LFHAI_VERSION:-0.1.6}"
+LFHAI_WHEEL_URL="${LFHAI_WHEEL_URL:-https://github.com/pranavkhaspa/lfhai/releases/download/v${LFHAI_VERSION}/lfhai-${LFHAI_VERSION}-py3-none-any.whl}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
