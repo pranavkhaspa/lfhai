@@ -6,6 +6,7 @@ from lfhai.models import (
     NodeCapabilities,
     NodeInfo,
     NodeResources,
+    RpcEndpoint,
 )
 from lfhai.registry import NodeRegistry
 
@@ -58,6 +59,26 @@ async def test_list_nodes(registry):
     await registry.register(make_node("node-2", "host-b"))
     nodes = await registry.list_nodes()
     assert len(nodes) == 2
+
+
+@pytest.mark.asyncio
+async def test_rpc_endpoints_round_trip(registry):
+    node = make_node()
+    node.capabilities.rpc_endpoints = [
+        RpcEndpoint(endpoint="10.0.0.2:50053", backend="cpu", memory_mb=1536),
+        RpcEndpoint(endpoint="10.0.0.2:50052", backend="cuda", memory_mb=8192),
+    ]
+    node.capabilities.fit_target_mib = 40960
+
+    await registry.register(node)
+    found = await registry.get_node("node-1")
+
+    assert found is not None
+    assert [endpoint.backend for endpoint in found.capabilities.rpc_endpoints] == [
+        "cpu",
+        "cuda",
+    ]
+    assert found.capabilities.fit_target_mib == 40960
 
 
 @pytest.mark.asyncio

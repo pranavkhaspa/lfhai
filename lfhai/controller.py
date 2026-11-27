@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 import time
@@ -13,6 +14,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from lfhai.models import (
+    ExecutionPlan,
     Heartbeat,
     JoinRequest,
     JoinResponse,
@@ -20,6 +22,7 @@ from lfhai.models import (
     NodeStatus,
     SubmitTaskRequest,
 )
+from lfhai.planner import PlanningError, make_plan
 from lfhai.registry import NodeRegistry, TaskStore
 from lfhai.router import TaskRouter
 
@@ -196,18 +199,44 @@ async def _dispatch_to_worker(
         return resp.json()
 
 
+async def _plan_request(model: str, context_size: int):
+    """Plan placement from the current node registry snapshot."""
+    if registry is None:
+        raise PlanningError("Controller registry is not initialized")
+    await registry.mark_offline_stale_nodes()
+    nodes = await registry.list_nodes()
+    return make_plan(model, nodes, context_size=context_size)
+
+
+@app.post("/api/v1/plan")
+async def create_plan(payload: dict) -> dict:
+    """Show how a model would be placed without dispatching a task."""
+    model = str(payload.get("model", "llama3"))
+    context_size = int(payload.get("context_size", 4096))
+    try:
+        placement = await _plan_request(model, context_size)
+    except PlanningError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "plan": placement.plan.model_dump(mode="json"),
+        "message": placement.message,
+    }
+
+
 @app.post("/v1/chat/completions")
-async def chat_completions(req: SubmitTaskRequest) -> dict:
+async def chat_completions(req: SubmitTaskRequest):
     """OpenAI-compatible chat completions endpoint."""
     import httpx as _httpx
 
-    node = await router.route(req.model)
+    try:
+        placement = await _plan_request(req.model, req.max_tokens + 1024)
+    except PlanningError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    plan: ExecutionPlan = placement.plan
+    node = await registry.get_node(plan.coordinator_node_id)
     if not node:
-        raise HTTPException(
-            status_code=503,
-            detail=f"No nodes available for model '{req.model}'. "
-                   f"Register a worker with this model first.",
-        )
+        raise HTTPException(status_code=503, detail="Planned worker disappeared")
 
     messages = [m.model_dump() for m in req.messages]
     node_secret = _node_secrets.get(node.node_id)
@@ -227,8 +256,10 @@ async def chat_completions(req: SubmitTaskRequest) -> dict:
         "model": req.model,
         "messages": messages,
         "temperature": req.temperature,
+        "max_tokens": req.max_tokens,
         "stream": req.stream,
         "task_id": req.task_id,
+        "shard_plan": plan.model_dump(mode="json"),
     }
 
     try:
@@ -240,6 +271,12 @@ async def chat_completions(req: SubmitTaskRequest) -> dict:
                 async with _httpx.AsyncClient(timeout=None) as pc:
                     endpoint = f"{worker_url}/worker/task"
                     async with pc.stream("POST", endpoint, json=payload, headers=headers) as stream:
+                        if stream.status_code != 200:
+                            body = await stream.aread()
+                            error = {"error": {"message": body.decode(errors="replace")}}
+                            yield f"data: {json.dumps(error)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
                         async for chunk in stream.aiter_bytes():
                             yield chunk
 
@@ -249,21 +286,23 @@ async def chat_completions(req: SubmitTaskRequest) -> dict:
         await task_store.update_task(
             req.task_id, status="completed", result=str(result), completed_at=time.time()
         )
+        choices = result.get("choices") or []
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+        else:
+            content = result.get("message", {}).get("content", "")
         return {
-            "id": f"chatcmpl-{req.task_id[:8]}",
+            "id": result.get("id") or f"chatcmpl-{req.task_id[:8]}",
             "object": "chat.completion",
             "model": req.model,
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": result.get("message", {}).get("content", ""),
-                    },
+                    "message": {"role": "assistant", "content": content},
                     "finish_reason": "stop",
                 }
             ],
-            "usage": result.get("eval_count", {}),
+            "usage": result.get("usage") or {"completion_tokens": result.get("eval_count", 0)},
         }
     except Exception as e:
         await task_store.update_task(

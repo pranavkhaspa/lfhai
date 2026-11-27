@@ -12,12 +12,27 @@
 #                   [--ollama-url http://localhost:11434]
 #                   [--join-token HOST:PORT:SECRET]
 #                   [--pip-url https://.../lfhai.whl]
+#                   [--rpc --rpc-bind LAN_IP --rpc-memory-mb 24000]
+#                   [--model-dir /models --llamacpp-bin /path/to/llama-server]
 #
 set -euo pipefail
 
 CONTROLLER_URL="http://localhost:8001"
 WORKER_PORT=8002
 OLLAMA_URL="http://localhost:11434"
+RPC_ENABLED=0
+RPC_MEMORY_MB=0
+RPC_BIND="127.0.0.1"
+RPC_CPU_ENABLED=0
+RPC_CPU_MEMORY_MB=0
+RPC_CPU_PORT=50053
+RPC_GPU_ENABLED=0
+RPC_GPU_MEMORY_MB=0
+RPC_GPU_PORT=50052
+FIT_TARGET_MIB=0
+MODEL_DIR=""
+LLAMACPP_BIN="llama-server"
+RPC_BIN="rpc-server"
 JOIN_TOKEN="${LFHAI_JOIN_TOKEN:-}"
 LFHAI_ROOT="${LFHAI_ROOT:-$HOME/.lfhai}"
 LFHAI_BIN="$LFHAI_ROOT/venv/bin"
@@ -31,9 +46,37 @@ while [[ $# -gt 0 ]]; do
         --ollama-url) OLLAMA_URL="$2"; shift 2 ;;
         --join-token) JOIN_TOKEN="$2"; shift 2 ;;
         --pip-url) LFHAI_WHEEL_URL="$2"; shift 2 ;;
+        --rpc) RPC_ENABLED=1; shift ;;
+        --rpc-memory-mb) RPC_MEMORY_MB="$2"; shift 2 ;;
+        --rpc-bind) RPC_BIND="$2"; shift 2 ;;
+        --rpc-cpu) RPC_CPU_ENABLED=1; shift ;;
+        --rpc-cpu-memory-mb) RPC_CPU_MEMORY_MB="$2"; shift 2 ;;
+        --rpc-cpu-port) RPC_CPU_PORT="$2"; shift 2 ;;
+        --rpc-gpu) RPC_GPU_ENABLED=1; shift ;;
+        --rpc-gpu-memory-mb) RPC_GPU_MEMORY_MB="$2"; shift 2 ;;
+        --rpc-gpu-port) RPC_GPU_PORT="$2"; shift 2 ;;
+        --fit-target-mib) FIT_TARGET_MIB="$2"; shift 2 ;;
+        --model-dir) MODEL_DIR="$2"; shift 2 ;;
+        --llamacpp-bin) LLAMACPP_BIN="$2"; shift 2 ;;
+        --rpc-bin) RPC_BIN="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
+
+WORKER_EXTRA_ARGS="--llamacpp-bin $LLAMACPP_BIN --rpc-bin $RPC_BIN --rpc-bind $RPC_BIND"
+if [[ "$RPC_ENABLED" -eq 1 ]]; then
+    WORKER_EXTRA_ARGS="$WORKER_EXTRA_ARGS --rpc --rpc-memory-mb $RPC_MEMORY_MB"
+fi
+if [[ "$RPC_CPU_ENABLED" -eq 1 ]]; then
+    WORKER_EXTRA_ARGS="$WORKER_EXTRA_ARGS --rpc-cpu --rpc-cpu-memory-mb $RPC_CPU_MEMORY_MB --rpc-cpu-port $RPC_CPU_PORT"
+fi
+if [[ "$RPC_GPU_ENABLED" -eq 1 ]]; then
+    WORKER_EXTRA_ARGS="$WORKER_EXTRA_ARGS --rpc-gpu --rpc-gpu-memory-mb $RPC_GPU_MEMORY_MB --rpc-gpu-port $RPC_GPU_PORT"
+fi
+if [[ "$FIT_TARGET_MIB" -gt 0 ]]; then
+    WORKER_EXTRA_ARGS="$WORKER_EXTRA_ARGS --fit-target-mib $FIT_TARGET_MIB"
+fi
+[[ -n "$MODEL_DIR" ]] && WORKER_EXTRA_ARGS="$WORKER_EXTRA_ARGS --model-dir $MODEL_DIR"
 
 echo "============================================"
 echo "  lfhai Worker Install"
@@ -45,6 +88,11 @@ echo "Ollama URL: $OLLAMA_URL"
 JOIN_STATUS="none (requires lfh node join)"
 [[ -n "$JOIN_TOKEN" ]] && JOIN_STATUS="provided"
 echo "Join Token: $JOIN_STATUS"
+RPC_STATUS="disabled"
+[[ "$RPC_ENABLED" -eq 1 ]] && RPC_STATUS="legacy"
+[[ "$RPC_CPU_ENABLED" -eq 1 ]] && RPC_STATUS="cpu"
+[[ "$RPC_GPU_ENABLED" -eq 1 ]] && RPC_STATUS="${RPC_STATUS}+gpu"
+echo "RPC Pool: $RPC_STATUS"
 echo "Install Dir: $LFHAI_ROOT"
 echo ""
 
@@ -175,7 +223,7 @@ Wants=ollama.service
 Type=simple
 User=$USER
 WorkingDirectory=$LFHAI_ROOT
-ExecStart=$LFHAI_BIN/lfh worker start -c $CONTROLLER_URL -p $WORKER_PORT -o $OLLAMA_URL
+ExecStart=$LFHAI_BIN/lfh worker start -c $CONTROLLER_URL -p $WORKER_PORT -o $OLLAMA_URL $WORKER_EXTRA_ARGS
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
@@ -195,7 +243,7 @@ EOF
     fi
 else
     if [[ "$JOINED" -eq 1 ]]; then
-        nohup "$LFHAI_BIN/lfh" worker start -c "$CONTROLLER_URL" -p "$WORKER_PORT" -o "$OLLAMA_URL" &>/dev/null &
+        nohup "$LFHAI_BIN/lfh" worker start -c "$CONTROLLER_URL" -p "$WORKER_PORT" -o "$OLLAMA_URL" $WORKER_EXTRA_ARGS &>/dev/null &
         echo "  Worker started in background ✓"
     else
         echo "  Run: lfh node join <token>   then: lfh worker start"

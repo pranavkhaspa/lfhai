@@ -12,10 +12,12 @@ import aiosqlite
 
 from lfhai.models import (
     Heartbeat,
+    ModelArtifact,
     NodeCapabilities,
     NodeInfo,
     NodeResources,
     NodeStatus,
+    RpcEndpoint,
 )
 
 HEARTBEAT_TIMEOUT = 10.0  # seconds before node is considered offline
@@ -30,6 +32,23 @@ def _hash_secret(secret: str) -> str:
 def _secrets_equal(a: str, b: str) -> bool:
     """Constant-time comparison of secret hashes."""
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def _serialize_capabilities(caps: NodeCapabilities) -> str:
+    return json.dumps(
+        {
+            "models": caps.models,
+            "model_artifacts": [a.model_dump() for a in caps.model_artifacts],
+            "backends": caps.backends,
+            "rpc_endpoint": caps.rpc_endpoint,
+            "rpc_memory_mb": caps.rpc_memory_mb,
+            "rpc_endpoints": [e.model_dump() for e in caps.rpc_endpoints],
+            "device_class": caps.device_class,
+            "fit_target_mib": caps.fit_target_mib,
+            "has_gpu": caps.has_gpu,
+            "has_cuda": caps.has_cuda,
+        }
+    )
 
 
 class NodeRegistry:
@@ -52,9 +71,13 @@ class NodeRegistry:
                 status TEXT DEFAULT 'online',
                 cores INTEGER DEFAULT 0,
                 memory_total_bytes INTEGER DEFAULT 0,
+                memory_used_bytes INTEGER DEFAULT 0,
+                memory_available_bytes INTEGER DEFAULT 0,
                 disk_free_bytes INTEGER DEFAULT 0,
                 gpu_model TEXT DEFAULT '',
                 gpu_vram_bytes INTEGER DEFAULT 0,
+                gpu_vram_used_bytes INTEGER DEFAULT 0,
+                gpu_vram_free_bytes INTEGER DEFAULT 0,
                 cuda_version TEXT DEFAULT '',
                 has_gpu INTEGER DEFAULT 0,
                 capabilities TEXT DEFAULT '[]',
@@ -98,6 +121,16 @@ class NodeRegistry:
             await self._db.execute(
                 "ALTER TABLE nodes ADD COLUMN api_port INTEGER DEFAULT 8002"
             )
+        for column, definition in (
+            ("memory_used_bytes", "INTEGER DEFAULT 0"),
+            ("memory_available_bytes", "INTEGER DEFAULT 0"),
+            ("gpu_vram_used_bytes", "INTEGER DEFAULT 0"),
+            ("gpu_vram_free_bytes", "INTEGER DEFAULT 0"),
+        ):
+            if column not in col_names:
+                await self._db.execute(
+                    f"ALTER TABLE nodes ADD COLUMN {column} {definition}"
+                )
         await self._db.commit()
 
     async def close(self) -> None:
@@ -111,23 +144,33 @@ class NodeRegistry:
         node.last_heartbeat = now
         node.status = NodeStatus.ONLINE
 
-        caps_json = json.dumps(node.capabilities.models)
+        caps_json = _serialize_capabilities(node.capabilities)
+        vram_used = node.resources.gpu.vram_used_bytes if node.resources.gpu else 0
+        vram_free = node.resources.vram_free_bytes
+        if not vram_free and node.resources.gpu:
+            vram_free = max(0, node.resources.gpu.vram_total_bytes - vram_used)
 
         await self._db.execute(
             """INSERT INTO nodes
-               (node_id, hostname, ip, status, cores, memory_total_bytes, disk_free_bytes,
-                gpu_model, gpu_vram_bytes, cuda_version, has_gpu, capabilities,
+               (node_id, hostname, ip, status, cores, memory_total_bytes,
+                memory_used_bytes, memory_available_bytes, disk_free_bytes,
+                gpu_model, gpu_vram_bytes, gpu_vram_used_bytes, gpu_vram_free_bytes,
+                cuda_version, has_gpu, capabilities,
                 api_port, registered_at, last_heartbeat)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(node_id) DO UPDATE SET
                 hostname=excluded.hostname,
                 ip=excluded.ip,
                 status=excluded.status,
                 cores=excluded.cores,
                 memory_total_bytes=excluded.memory_total_bytes,
+                memory_used_bytes=excluded.memory_used_bytes,
+                memory_available_bytes=excluded.memory_available_bytes,
                 disk_free_bytes=excluded.disk_free_bytes,
                 gpu_model=excluded.gpu_model,
                 gpu_vram_bytes=excluded.gpu_vram_bytes,
+                gpu_vram_used_bytes=excluded.gpu_vram_used_bytes,
+                gpu_vram_free_bytes=excluded.gpu_vram_free_bytes,
                 cuda_version=excluded.cuda_version,
                 has_gpu=excluded.has_gpu,
                 capabilities=excluded.capabilities,
@@ -141,9 +184,13 @@ class NodeRegistry:
                 node.status.value,
                 node.resources.cores,
                 node.resources.memory_total_bytes,
+                node.resources.memory_used_bytes,
+                node.resources.memory_available_bytes,
                 node.resources.disk_free_bytes,
                 node.resources.gpu.model if node.resources.gpu else "",
                 node.resources.gpu.vram_total_bytes if node.resources.gpu else 0,
+                vram_used,
+                vram_free,
                 node.resources.gpu.cuda_version if node.resources.gpu else "",
                 int(node.capabilities.has_gpu),
                 caps_json,
@@ -244,12 +291,31 @@ class NodeRegistry:
     async def heartbeat(self, hb: Heartbeat) -> bool:
         """Update heartbeat for a node. Returns False if node not found."""
         now = time.time()
+        m = hb.metrics
+        available = m.memory_available_bytes or max(0, m.memory_total_bytes - m.memory_used_bytes)
         cursor = await self._db.execute(
             """UPDATE nodes SET last_heartbeat = ?, status = 'online',
                cores = COALESCE(NULLIF(cores, 0), cores),
-               memory_total_bytes = CASE WHEN ? > 0 THEN ? ELSE memory_total_bytes END
+               memory_total_bytes = CASE WHEN ? > 0 THEN ? ELSE memory_total_bytes END,
+               memory_used_bytes = CASE WHEN ? > 0 THEN ? ELSE memory_used_bytes END,
+               memory_available_bytes = CASE WHEN ? > 0 THEN ? ELSE memory_available_bytes END,
+               gpu_vram_used_bytes = CASE WHEN ? > 0 THEN ? ELSE gpu_vram_used_bytes END,
+               gpu_vram_free_bytes = CASE WHEN ? > 0 THEN ? ELSE gpu_vram_free_bytes END
                WHERE node_id = ?""",
-            (now, hb.metrics.memory_total_bytes, hb.metrics.memory_total_bytes, hb.node_id),
+            (
+                now,
+                m.memory_total_bytes,
+                m.memory_total_bytes,
+                m.memory_used_bytes,
+                m.memory_used_bytes,
+                available,
+                available,
+                m.gpu_vram_used_bytes,
+                m.gpu_vram_used_bytes,
+                m.gpu_vram_free_bytes,
+                m.gpu_vram_free_bytes,
+                hb.node_id,
+            ),
         )
         await self._db.commit()
         return cursor.rowcount > 0
@@ -320,19 +386,37 @@ class NodeRegistry:
         return cursor.rowcount > 0
 
     def _row_to_node(self, row: aiosqlite.Row) -> NodeInfo:
+        from lfhai.models import GPUInfo
+
         gpu = None
         gpu_model = row["gpu_model"]
         if gpu_model:
-            from lfhai.models import GPUInfo
             gpu = GPUInfo(
                 model=gpu_model,
                 vram_total_bytes=row["gpu_vram_bytes"],
+                vram_used_bytes=row["gpu_vram_used_bytes"] or 0,
                 cuda_version=row["cuda_version"],
             )
 
+        stored_caps = json.loads(row["capabilities"]) if row["capabilities"] else []
+        if isinstance(stored_caps, list):
+            stored_caps = {"models": stored_caps}
         caps = NodeCapabilities(
-            models=json.loads(row["capabilities"]) if row["capabilities"] else [],
+            models=stored_caps.get("models", []),
+            model_artifacts=[
+                ModelArtifact.model_validate(a)
+                for a in stored_caps.get("model_artifacts", [])
+            ],
+            backends=stored_caps.get("backends", []),
+            rpc_endpoint=stored_caps.get("rpc_endpoint", ""),
+            rpc_memory_mb=stored_caps.get("rpc_memory_mb", 0),
+            rpc_endpoints=[
+                RpcEndpoint.model_validate(e) for e in stored_caps.get("rpc_endpoints", [])
+            ],
+            device_class=stored_caps.get("device_class", "auto"),
+            fit_target_mib=stored_caps.get("fit_target_mib", 0),
             has_gpu=bool(row["has_gpu"]),
+            has_cuda=stored_caps.get("has_cuda", bool(row["has_gpu"])),
         )
 
         resources = NodeResources(
@@ -340,6 +424,9 @@ class NodeRegistry:
             ip=row["ip"],
             cores=row["cores"],
             memory_total_bytes=row["memory_total_bytes"],
+            memory_used_bytes=row["memory_used_bytes"] or 0,
+            memory_available_bytes=row["memory_available_bytes"] or 0,
+            vram_free_bytes=row["gpu_vram_free_bytes"] or 0,
             disk_free_bytes=row["disk_free_bytes"],
             gpu=gpu,
         )

@@ -2,7 +2,7 @@
 
 lfhai is a distributed, local-first compute fabric and runtime designed to coordinate mismatched, resource-constrained consumer hardware into a unified AI system. Rather than relying on uniform cluster topologies (like homogeneous GPU nodes), lfhai abstracts heterogeneous hardware—such as standard consumer GPUs, older CPUs, mobile devices, and shared local servers—into a single execution layer.
 
-**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, worker auth, and CLI are working. 64 tests passing (unit + live end-to-end cluster tests against stub Ollama).
+**Status: V1 Implemented** - Core routing, node registration, heartbeat monitoring, worker auth, CLI, multi-endpoint RPC memory pooling, GGUF-aware planning, LAN discovery, and native RPC bridges for Android/iOS are working. 81 tests passing, 2 skipped (unit + live end-to-end cluster tests against stub backends). Real llama.cpp RPC pooling, `--fit-target`, and tensor/KV offload were verified with a 15M GGUF.
 
 ---
 
@@ -32,17 +32,67 @@ lfh status
 
 ---
 
+## Running a 70B model across devices
+
+Ollama does **not** shard one model across machines; it only streams tokens and splits
+within a single machine. For a 70B-class model that does not fit on one device, lfhai
+uses llama.cpp's RPC backend: each helper exposes free RAM/VRAM over a private LAN,
+and the coordinator runs `llama-server --rpc ...` so weights, layer compute and KV
+cache are distributed across the pool.
+
+Requirements:
+
+- llama.cpp built with RPC support (`-DGGML_RPC=ON`), providing `llama-server` and `rpc-server`/`ggml-rpc-server`
+- a quantized GGUF copy of the model on the coordinator (e.g. 70B Q4_K_M ≈ 40 GiB)
+- combined advertised RPC capacity ≥ `GGUF runtime estimate × 1.18` (the planner checks this before dispatch)
+- a trusted private network — llama.cpp RPC is **not authenticated or encrypted**
+
+```bash
+# CPU contributor (desktop, laptop, Android node, UNO Q):
+lfh worker start -c http://controller:8001 \
+  --advertise-ip 192.168.1.11 \
+  --rpc-cpu --rpc-bind 192.168.1.11 \
+  --rpc-cpu-memory-mb 1536 --rpc-cpu-port 50053
+
+# GPU contributor:
+lfh worker start -c http://controller:8001 \
+  --advertise-ip 192.168.1.12 \
+  --rpc-gpu --rpc-bind 192.168.1.12 \
+  --rpc-gpu-memory-mb 9000 --rpc-gpu-port 50052
+
+# On the device holding the GGUF file:
+lfh worker start -c http://controller:8001 \
+  --advertise-ip 192.168.1.10 \
+  --model-dir /models --llamacpp-bin /path/to/llama-server
+
+# Inspect the plan, then chat/stream normally:
+lfh discover
+lfh plan llama3:70b
+lfh chat llama3:70b --stream "Explain distributed inference"
+```
+
+The worker advertises each RPC lane separately, sets `GGML_RPC_NO_COMM=1` by default,
+supervises RPC processes on each heartbeat, and retries with fewer peers if a
+`llama-server --rpc` startup fails. `lfh plan` shows the chosen strategy
+(`ollama`, `llamacpp`, or `rpc_pool`), the fit-target MiB, GGUF-aware memory estimate,
+and every RPC endpoint whose memory will be pooled.
+
+---
+
 ## What V1 Includes
 
 | Component | Status | Description |
 |-----------|--------|-------------|
 | **Controller** | Working | Node registry (SQLite), heartbeat tracking, task routing |
-| **Worker** | Working | Ollama integration, capability detection, task execution |
+| **Worker** | Working | Ollama integration, capability detection, multi-lane RPC supervision, task execution |
 | **Gateway** | Working | OpenAI-compatible HTTP API (streaming + non-streaming) |
 | **CLI** | Working | `lfh` command: status, chat, nodes, models, worker start |
-| **Router** | Working | GPU-preferring, capability-aware node selection |
+| **Router** | Working | Planner-based placement with free RAM/VRAM accounting |
+| **70B RPC pool** | Working | GGUF-aware planning, fit targets, multi-backend endpoints, fallback, streaming via llama.cpp RPC |
 | **Tailcat** | Verified (real binary) | Encrypted tunnel wrapper — `serve --json`/`ping` tested against the real tailcat binary |
-| **Tests** | 64 passing | Unit + live E2E (multi-node controller+worker+gateway against stub Ollama) |
+| **RPC pool** | Verified (real binary) | `ggml-rpc-server` + `llama-server --rpc --fit-target` offloaded 7/7 layers to RPC0 |
+| **Apps** | Dev builds | Android JNI and iOS `lfhai_rpc_start` native bridges build from llama.cpp |
+| **Tests** | 81 passing, 2 skipped | Unit + live E2E (controller+worker+gateway against stub Ollama/llama-server) |
 | **install.sh** | Ready | Worker provisioning script (Ollama + lfhai + systemd) |
 
 ### What V1 Does NOT Include (Future)
@@ -53,7 +103,7 @@ lfh status
 - Semantic caching (exact-match routing only)
 - RAG / embedding support
 - Dashboard / web UI
-- Android / mobile nodes
+- Signed Android/iOS store releases
 - Guardrails / content filtering
 
 ---
@@ -93,8 +143,10 @@ lfh nodes                     # List all registered nodes
 lfh models                    # List available models across cluster
 lfh chat <model> <prompt>     # Submit a chat request
 lfh chat --stream <model> <prompt>  # Stream response
-lfh worker start              # Start worker on this machine
-lfh worker status             # Check local worker status
+lfh plan <model>              # Show placement/RPC shard plan + fit target
+lfh discover                  # Find workers advertising on the LAN
+lfh worker start              # Start worker; add --rpc-cpu/--rpc-gpu for pooling
+lfh worker status             # Check local worker status and RPC lanes
 lfh controller                # Start the controller
 lfh gateway                   # Start the gateway
 ```
@@ -188,18 +240,31 @@ lfhai/
 │   ├── controller.py       # Cluster controller + HTTP API
 │   ├── worker.py           # Worker daemon + Ollama proxy
 │   ├── gateway.py          # User-facing HTTP gateway
-│   ├── router.py           # Task routing logic
+│   ├── router.py           # Legacy capability-based fallback router
+│   ├── planner.py          # GGUF-aware placement + RPC memory-pool planning
+│   ├── gguf.py             # Clean-room GGUF header reader
+│   ├── discovery.py        # LAN discovery beacons
 │   ├── ollama.py           # Ollama API client
 │   ├── registry.py         # SQLite node registry + task store
 │   ├── tailcat.py          # Tailcat encrypted tunnel wrapper
 │   └── cli.py              # lfh CLI tool
 ├── tests/
 │   ├── test_models.py       # Model tests (7)
-│   ├── test_registry.py     # Registry tests (15)
+│   ├── test_registry.py     # Registry tests (16)
 │   ├── test_router.py       # Router tests (3)
+│   ├── test_planner.py      # 70B placement/RPC pool tests (7)
+│   ├── test_gguf.py         # GGUF parser tests (2)
+│   ├── test_discovery.py    # LAN discovery tests (2)
 │   ├── test_controller.py   # Controller API tests (18)
-│   ├── test_worker.py       # Worker dispatch auth tests (6)
-│   └── e2e/                 # Live cluster test (1)
+│   ├── test_worker.py       # Worker RPC + dispatch tests (11)
+│   └── e2e/                 # Live cluster + RPC pool tests (3)
+├── apps/
+│   ├── android/             # Kotlin node app + JNI/llama.cpp RPC native build
+│   └── ios/                 # Swift node client + llama.cpp RPC native library
+├── packaging/
+│   ├── linux/               # Linux node package build + service
+│   └── uno-q/               # UNO Q CPU-node setup
+├── .github/workflows/ci.yml # CI matrix: core, Linux, Android, iOS
 ├── pyproject.toml          # Project config
 ├── install.sh              # Worker provisioning script
 └── V1_PLAN.md              # V1 implementation plan
@@ -223,40 +288,71 @@ lfhai/
   requested model (GPU is a tie-breaker, never a requirement)
 - Runs: worker daemon + Ollama
 
-### Supported Platforms
+### Releases and supported platforms
 
-The lfhai runtime (controller, gateway, worker) is pure Python and works on
-**Linux, macOS, and Windows natively** — it speaks HTTP to Ollama, which ships
-native installers for all three.
+Pushing a `v*` tag publishes GitHub Release artifacts via
+`.github/workflows/release.yml`:
 
-- **Linux / macOS:** use the one-line installer (`install.sh`).
-- **Windows:** `install.sh` is POSIX-only (bash + systemd), but the CLI works
-  natively. Install Python, then:
-  ```powershell
-  pip install https://lfhai.vercel.app/lfhai-0.1.5-py3-none-any.whl
-  lfh node join <token>
-  lfh worker start
-  ```
-  pointing `--ollama-url` at the Windows [Ollama](https://ollama.com/download/windows)
-  default (`http://localhost:11434`). Open TCP 8000/8001/8002 in Windows
-  Firewall to accept connections from other nodes.
-- **WSL2:** gives you the full `install.sh` experience (systemd is supported),
-  including the auto-start systemd service.
-- **Android (roadmap):** the node is a plain Python process talking HTTP, so it
-  is runnable under Termux + proot-distro once a bundled Ollama is available
-  there.
+- `lfhai-<version>.apk` — Android debug APK for contributor devices
+- `lfhai-linux-x86_64-<version>.tar.gz` — portable Linux CLI + `llama-server` + `ggml-rpc-server`
+- `lfhai-windows-x86_64-<version>.zip` — portable Windows CLI + `llama-server.exe` + `ggml-rpc-server.exe`
 
-### Optional: Tailcat Encrypted Tunnels
-
-If nodes are on different networks, install [tailcat](https://github.com/tailscale/tailcat) for encrypted tunnels:
+The runtime is pure Python and also works on Linux, macOS, and Windows with Ollama.
+For portable bundles, set environment variables and run the bundled launcher:
 
 ```bash
-# macOS
-brew install tailcat
-
-# Go
-go install github.com/tailscale/tailcat/cmd/tailcat@latest
+# Linux
+export LFHAI_CONTROLLER="http://100.x.y.z:8001"
+export LFHAI_RPC_BIND="100.x.y.z"
+export LFHAI_RPC_CPU_MEMORY_MB=1536
+export LFHAI_MODEL_DIR="$PWD/models"
+./run-worker.sh
 ```
+
+```powershell
+# Windows
+$env:LFHAI_CONTROLLER = "http://100.x.y.z:8001"
+$env:LFHAI_RPC_BIND = "100.x.y.z"
+$env:LFHAI_RPC_CPU_MEMORY_MB = 1536
+.\run-worker.ps1
+```
+
+Install the Android APK, paste the controller token as `HOST:PORT:SECRET`, and
+the app will join and expose a CPU RPC endpoint. A Tailscale `100.x.y.z` host
+works as `HOST`.
+
+### Tailscale for distant / out-of-network nodes
+
+LAN discovery is local-only; across Tailscale, use the tailnet IP explicitly.
+Install and join Tailscale locally, then use that IP in the controller token,
+`LFHAI_CONTROLLER`, and `LFHAI_RPC_BIND`. Never put auth keys in the repo.
+
+```bash
+# Linux, with key kept in your shell environment
+TAILSCALE_AUTHKEY="tskey-..." ./scripts/setup-tailscale.sh
+
+# Windows PowerShell
+$env:TAILSCALE_AUTHKEY = "tskey-..."
+.\scripts\setup-tailscale.ps1
+```
+
+Allow TCP `8000`, `8001`, `8002`, `50052`, and `50053` between Tailscale peers.
+The controller URL printed by `lfh token create` should use the controller's
+tailnet IP.
+
+### UNO Q Wi-Fi and worker setup
+
+Keep Wi-Fi credentials in a local file that is never committed:
+
+```bash
+cp packaging/uno-q/lfhai-wifi.env.example packaging/uno-q/lfhai-wifi.env
+# edit WIFI_SSID, WIFI_PASSWORD, and optional LFHAI_ADVERTISE_IP
+LFHAI_WIFI_ENV=packaging/uno-q/lfhai-wifi.env \
+  bash packaging/uno-q/setup.sh "100.x.y.z:8001:SECRET" 100.x.y.z
+```
+
+`setup.sh` joins Wi-Fi first, then installs the worker with a CPU RPC lane on
+port `50053` and advertises the selected IP.
 
 ---
 
@@ -270,10 +366,12 @@ go install github.com/tailscale/tailcat/cmd/tailcat@latest
 - [x] CLI tool
 - [x] CPU-only worker support (Ollama CPU mode)
 - [x] Worker dispatch authentication (per-node secrets)
-- [x] Live multi-node E2E test (64 passing)
+- [x] 70B-class placement and llama.cpp RPC memory pooling
+- [x] Live multi-node E2E test (81 passing, 2 skipped)
 
 ### V2 - Networking
 - [x] Tailcat tunnel integration (verified against the real binary)
+- [x] Tailscale setup scripts and tailnet-IP worker advertising
 - [ ] Multi-controller support
 - [ ] Node-to-node direct communication
 
@@ -286,5 +384,5 @@ go install github.com/tailscale/tailcat/cmd/tailcat@latest
 ### V4 - Scale
 - [ ] Dashboard / web UI
 - [ ] Raft consensus
-- [ ] Android / mobile nodes
+- [x] Android / mobile nodes (debug APK releases)
 - [ ] Guardrails

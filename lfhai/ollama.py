@@ -34,6 +34,17 @@ class OllamaClient:
         models = await self.list_models()
         return [m["name"] for m in models]
 
+    async def list_model_details(self) -> list[dict]:
+        """Return model names with their on-disk sizes for placement planning."""
+        models = await self.list_models()
+        return [
+            {
+                "name": m.get("name", ""),
+                "size": m.get("size", 0),
+            }
+            for m in models
+        ]
+
     async def generate(
         self,
         model: str,

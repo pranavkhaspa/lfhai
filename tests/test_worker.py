@@ -1,9 +1,12 @@
 """Tests for the worker HTTP API (dispatch auth + task execution)."""
 
+from types import SimpleNamespace
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 import lfhai.worker as worker_module
+from lfhai.models import RpcEndpoint
 from lfhai.worker import app
 
 
@@ -112,3 +115,84 @@ async def test_cancel_with_auth(client):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "not_supported"
+
+
+def test_configured_rpc_endpoints(monkeypatch):
+    monkeypatch.setattr(worker_module, "rpc_cpu_memory_mb", 1536)
+    monkeypatch.setattr(worker_module, "rpc_gpu_memory_mb", 8192)
+    monkeypatch.setattr(worker_module, "rpc_bind_host", "10.0.0.5")
+    monkeypatch.setattr(worker_module, "rpc_cpu_port", 50053)
+    monkeypatch.setattr(worker_module, "rpc_gpu_port", 50052)
+    monkeypatch.setattr(worker_module, "rpc_memory_mb", 0)
+
+    endpoints = worker_module._configured_rpc_endpoints()
+
+    assert [(endpoint.endpoint, endpoint.backend) for endpoint in endpoints] == [
+        ("10.0.0.5:50053", "cpu"),
+        ("10.0.0.5:50052", "cuda"),
+    ]
+
+
+def test_rpc_environment_disables_peer_chatter(monkeypatch):
+    monkeypatch.setattr(worker_module, "rpc_no_comm", True)
+
+    env = worker_module._rpc_environment()
+
+    assert env["GGML_RPC_NO_COMM"] == "1"
+
+
+def test_llama_fallback_endpoints():
+    attempts = worker_module._llama_fallback_endpoints(["a:1", "b:2"])
+
+    assert attempts == [["a:1", "b:2"], ["a:1"], []]
+
+
+def test_start_rpc_endpoint_command(monkeypatch):
+    captured = {}
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs["env"]
+        return FakeProcess()
+
+    monkeypatch.setattr(worker_module, "_resolve_binary", lambda _: "/usr/bin/rpc-server")
+    monkeypatch.setattr(worker_module, "_rpc_server_supports_mem", lambda _: False)
+    monkeypatch.setattr(worker_module, "llamacpp_threads", 4)
+    monkeypatch.setattr(worker_module, "rpc_no_comm", True)
+    monkeypatch.setattr(worker_module.subprocess, "Popen", fake_popen)
+    worker_module._rpc_processes.clear()
+
+    endpoint = RpcEndpoint(endpoint="10.0.0.5:50053", backend="cpu", memory_mb=1536)
+    assert worker_module._start_rpc_endpoint(endpoint) is True
+    assert captured["cmd"][:2] == ["/usr/bin/rpc-server", "--host"]
+    assert captured["cmd"][4] == "50053"
+    assert captured["cmd"][-2:] == ["4", "--cache"]
+    assert captured["env"]["GGML_RPC_NO_COMM"] == "1"
+
+
+def test_rpc_server_supports_mem_detection(monkeypatch):
+    monkeypatch.setattr(worker_module, "_rpc_mem_supported", None)
+    monkeypatch.setattr(
+        worker_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout="--mem MB", stderr=""),
+    )
+
+    assert worker_module._rpc_server_supports_mem("/usr/bin/rpc-server") is True
+
+
+def test_start_rpc_server_advertises_ip(monkeypatch):
+    configured = [RpcEndpoint(endpoint="0.0.0.0:50053", backend="cpu", memory_mb=1536)]
+    monkeypatch.setattr(worker_module, "_configured_rpc_endpoints", lambda: configured)
+    monkeypatch.setattr(worker_module, "_start_rpc_endpoint", lambda _: True)
+
+    advertised = worker_module._start_rpc_server("10.0.0.9")
+
+    assert [endpoint.endpoint for endpoint in advertised] == ["10.0.0.9:50053"]

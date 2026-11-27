@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.lfhai.node'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.lfhai.node'
+        minSdk 24
+        targetSdk 34
+        versionCode (project.findProperty('lfhaiVersionCode') as Integer ?: 1)
+        versionName (project.findProperty('lfhaiVersion') ?: '0.1.5')
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+                def llamaSourceDir = project.findProperty('lfhaiLlamaSourceDir')
+                if (llamaSourceDir) {
+                    arguments "-DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$llamaSourceDir"
+                }
+                abiFilters 'arm64-v8a'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

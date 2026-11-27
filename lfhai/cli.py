@@ -160,6 +160,48 @@ def models(ctx):
         sys.exit(1)
 
 
+@main.command()
+@click.argument("model")
+@click.option("--context-size", default=4096, show_default=True)
+@click.pass_context
+def plan(ctx, model, context_size):
+    """Show how the cluster would place MODEL (including RPC shards)."""
+    ctrl = ctx.obj["controller"]
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(
+                f"{ctrl}/api/v1/plan",
+                json={"model": model, "context_size": context_size},
+            )
+            if resp.status_code != 200:
+                click.echo(f"Error: {resp.json().get('detail', resp.text)}", err=True)
+                sys.exit(1)
+            data = resp.json()
+            click.echo(data["message"])
+            click.echo(json.dumps(data["plan"], indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command("discover")
+@click.option("--timeout", default=3.0, show_default=True, help="Discovery listen time in seconds")
+def discover_cmd(timeout):
+    """Find lfhai workers on the local network."""
+    from lfhai.discovery import discover_nodes
+
+    beacons = discover_nodes(timeout)
+    if not beacons:
+        click.echo("No workers discovered.")
+        return
+    for beacon in beacons:
+        endpoints = ", ".join(endpoint.endpoint for endpoint in beacon.rpc_endpoints)
+        click.echo(
+            f"{beacon.node_id[:12]}  {beacon.hostname}  "
+            f"{beacon.address}:{beacon.api_port}  rpc={endpoints or 'none'}"
+        )
+
+
 @main.group()
 def worker():
     """Worker management commands."""
@@ -173,7 +215,33 @@ def worker():
 @click.option("--credentials", "-cr", default=None, help="Credential file path")
 @click.option("--advertise-ip", default=None,
               help="IP advertised to the controller (useful behind NAT/multi-homed)")
-def worker_start(controller_url, port, ollama_url, credentials, advertise_ip):
+@click.option("--rpc", "enable_rpc", is_flag=True,
+              help="Expose local memory to the cluster via llama.cpp RPC")
+@click.option("--rpc-memory-mb", default=0, show_default=True,
+              help="MiB to expose via RPC (default: 70% of free RAM with --rpc)")
+@click.option("--rpc-bind", default="127.0.0.1", show_default=True,
+              help="RPC bind address; use a trusted LAN IP or 0.0.0.0 on a private network")
+@click.option("--rpc-port", default=50052, show_default=True, help="llama.cpp RPC port")
+@click.option("--rpc-cpu", "enable_rpc_cpu", is_flag=True, help="Expose a CPU RPC endpoint")
+@click.option("--rpc-cpu-memory-mb", default=0, show_default=True)
+@click.option("--rpc-cpu-port", default=50053, show_default=True)
+@click.option("--rpc-gpu", "enable_rpc_gpu", is_flag=True, help="Expose a GPU RPC endpoint")
+@click.option("--rpc-gpu-memory-mb", default=0, show_default=True)
+@click.option("--rpc-gpu-port", default=50052, show_default=True)
+@click.option("--fit-target-mib", default=0, show_default=True,
+              help="llama-server RPC fit target in MiB")
+@click.option("--allow-rpc-comm", is_flag=True,
+              help="Allow RPC peer chatter; disabled by default")
+@click.option("--model-dir", default="", help="Directory containing GGUF model files")
+@click.option("--llamacpp-bin", default="llama-server", show_default=True)
+@click.option("--rpc-bin", default="ggml-rpc-server", show_default=True)
+@click.option("--threads", default=0, show_default=True, help="CPU threads for RPC/llama-server")
+def worker_start(
+    controller_url, port, ollama_url, credentials, advertise_ip, enable_rpc,
+    rpc_memory_mb, rpc_bind, rpc_port, enable_rpc_cpu, rpc_cpu_memory_mb, rpc_cpu_port,
+    enable_rpc_gpu, rpc_gpu_memory_mb, rpc_gpu_port, fit_target_mib, allow_rpc_comm,
+    model_dir, llamacpp_bin, rpc_bin, threads,
+):
     """Start a worker daemon on this machine."""
     from lfhai.worker import run_worker
     run_worker(
@@ -182,6 +250,22 @@ def worker_start(controller_url, port, ollama_url, credentials, advertise_ip):
         ollama=ollama_url,
         credentials=credentials,
         advertise_ip=advertise_ip,
+        enable_rpc=enable_rpc,
+        rpc_memory=rpc_memory_mb,
+        rpc_bind=rpc_bind,
+        rpc_listen_port=rpc_port,
+        models_path=model_dir,
+        server_binary=llamacpp_bin,
+        rpc_binary=rpc_bin,
+        threads=threads,
+        rpc_cpu=enable_rpc_cpu,
+        rpc_cpu_memory=rpc_cpu_memory_mb,
+        rpc_cpu_listen_port=rpc_cpu_port,
+        rpc_gpu=enable_rpc_gpu,
+        rpc_gpu_memory=rpc_gpu_memory_mb,
+        rpc_gpu_listen_port=rpc_gpu_port,
+        fit_target=fit_target_mib,
+        allow_rpc_comm=allow_rpc_comm,
     )
 
 
@@ -198,6 +282,13 @@ def worker_status(url):
             click.echo(f"Ollama:   {data.get('ollama_url', 'unknown')}")
             models = data.get("models", [])
             click.echo(f"Models:   {', '.join(models) if models else 'none detected'}")
+            endpoints = data.get("rpc_endpoints", [])
+            if endpoints:
+                for endpoint in endpoints:
+                    click.echo(
+                        f"RPC:      {endpoint.get('endpoint')} "
+                        f"({endpoint.get('backend')}, {endpoint.get('memory_mb')} MiB)"
+                    )
     except Exception as e:
         click.echo(f"Worker unreachable: {e}", err=True)
         sys.exit(1)

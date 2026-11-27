@@ -1,0 +1,151 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_CPP_REF: ca123ba76311290ec6ab041dd2058fed8d9f03d2
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Compile
+        run: python -m compileall -q lfhai
+      - name: Lint
+        run: python -m ruff check lfhai/ tests/
+      - name: Test
+        run: python -m pytest tests -q
+      - name: Check shell syntax
+        run: bash -n install.sh packaging/linux/build.sh packaging/linux/run-worker.sh packaging/release/build-linux-portable.sh packaging/tailscale/setup-tailscale.sh packaging/uno-q/setup.sh packaging/uno-q/setup-wifi.sh
+
+  android-debug:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Clone pinned llama.cpp
+        run: |
+          git init llama.cpp
+          git -C llama.cpp remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C llama.cpp fetch --depth 1 origin "$LLAMA_CPP_REF"
+          git -C llama.cpp checkout FETCH_HEAD
+      - name: Assemble debug APK
+        working-directory: apps/android
+        run: gradle assembleDebug -PlfhaiVersion="$VERSION" -PlfhaiVersionCode="$GITHUB_RUN_NUMBER" -PlfhaiLlamaSourceDir="$GITHUB_WORKSPACE/llama.cpp" --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: apps/android/app/build/outputs/apk/debug/*.apk
+
+  linux-portable:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Clone pinned llama.cpp
+        run: |
+          git init llama.cpp
+          git -C llama.cpp remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C llama.cpp fetch --depth 1 origin "$LLAMA_CPP_REF"
+          git -C llama.cpp checkout FETCH_HEAD
+      - name: Build llama.cpp RPC binaries
+        run: |
+          cmake -S llama.cpp -B llama-build -DCMAKE_BUILD_TYPE=Release -DGGML_RPC=ON -DGGML_BACKEND_DL=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF
+          cmake --build llama-build --target llama-server ggml-rpc-server --parallel 4
+      - name: Build Linux bundle
+        env:
+          LLAMA_CPP_BUILD_DIR: ${{ github.workspace }}/llama-build
+        run: bash packaging/release/build-linux-portable.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-portable
+          path: dist/lfhai-linux-x86_64-*.tar.gz
+
+  windows-portable:
+    runs-on: windows-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+      - name: Set version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ env.LLAMA_CPP_REF }}
+          path: llama.cpp
+      - name: Build llama.cpp RPC binaries
+        run: |
+          cmake -S llama.cpp -B llama-build -DGGML_RPC=ON -DGGML_BACKEND_DL=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF
+          cmake --build llama-build --config Release --target llama-server ggml-rpc-server --parallel 4
+      - name: Build Windows bundle
+        shell: pwsh
+        run: powershell -File packaging\release\build-windows-portable.ps1 -LlamaBuildDir llama-build -Version $env:VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: dist/lfhai-windows-x86_64-*.zip
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [android-debug, linux-portable, windows-portable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-artifacts/*/* --clobber
+          else
+            gh release create "$TAG" release-artifacts/*/* --title "$TAG" --generate-notes
+          fi

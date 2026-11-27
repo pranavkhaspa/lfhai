@@ -10,6 +10,7 @@ venv/
 
 # lfhai
 lfhai.db
+packaging/uno-q/lfhai-wifi.env
 
 # Node / docs-site
 node_modules/
